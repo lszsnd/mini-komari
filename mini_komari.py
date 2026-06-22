@@ -22,9 +22,11 @@ import base64
 import hashlib
 import hmac
 import html
+import http.cookies
 import json
 import os
 import platform
+import secrets
 import shutil
 import socket
 import sys
@@ -44,7 +46,11 @@ PREV_CPU = None
 PREV_SAMPLE_TIME = None
 NODES: Dict[str, Dict[str, object]] = {}
 NODES_LOCK = threading.Lock()
+SESSIONS: Dict[str, float] = {}
+SESSIONS_LOCK = threading.Lock()
 DATA_FILE = Path(os.environ.get("MINI_KOMARI_DATA_FILE", "/opt/mini-komari/nodes.json"))
+USER_FILE = Path(os.environ.get("MINI_KOMARI_USER_FILE", "/opt/mini-komari/user.json"))
+SESSION_TTL = 86400 * 7
 
 
 def read_text(path: str, default: str = "") -> str:
@@ -256,6 +262,129 @@ def set_data_file(path: str | Path) -> None:
     DATA_FILE = Path(path)
 
 
+def set_user_file(path: str | Path) -> None:
+    global USER_FILE
+    USER_FILE = Path(path)
+
+
+def password_hash(password: str, salt: str | None = None) -> Tuple[str, str]:
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200_000).hex()
+    return salt, digest
+
+
+def load_user() -> Dict[str, object] | None:
+    if not USER_FILE.exists():
+        return None
+    try:
+        payload = json.loads(USER_FILE.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) and payload.get("username") else None
+    except Exception as exc:
+        print(f"Failed to load user from {USER_FILE}: {exc}", file=sys.stderr, flush=True)
+        return None
+
+
+def save_user(username: str, password: str) -> None:
+    username = username.strip()
+    if not username or not password:
+        raise ValueError("username and password are required")
+    USER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    salt, digest = password_hash(password)
+    payload = {"version": 1, "username": username, "salt": salt, "password_hash": digest, "created_at": now_iso()}
+    tmp = USER_FILE.with_name(f".{USER_FILE.name}.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, USER_FILE)
+    try:
+        USER_FILE.chmod(0o600)
+    except Exception:
+        pass
+
+
+def verify_user(username: str, password: str) -> bool:
+    user = load_user()
+    if not user:
+        return False
+    salt = str(user.get("salt", ""))
+    stored = str(user.get("password_hash", ""))
+    _, digest = password_hash(password, salt)
+    return hmac.compare_digest(username, str(user.get("username", ""))) and hmac.compare_digest(digest, stored)
+
+
+def ensure_legacy_user(username: str = "", password: str = "") -> None:
+    if USER_FILE.exists() or not username or not password:
+        return
+    try:
+        save_user(username, password)
+        print(f"Created dashboard user {username!r} from legacy auth args", flush=True)
+    except Exception as exc:
+        print(f"Failed to create legacy dashboard user: {exc}", file=sys.stderr, flush=True)
+
+
+def create_session() -> str:
+    sid = secrets.token_urlsafe(32)
+    with SESSIONS_LOCK:
+        SESSIONS[sid] = time.time() + SESSION_TTL
+    return sid
+
+
+def valid_session(sid: str) -> bool:
+    if not sid:
+        return False
+    now = time.time()
+    with SESSIONS_LOCK:
+        exp = SESSIONS.get(sid, 0)
+        if exp <= now:
+            SESSIONS.pop(sid, None)
+            return False
+        SESSIONS[sid] = now + SESSION_TTL
+        return True
+
+
+def clear_session(sid: str) -> None:
+    if not sid:
+        return
+    with SESSIONS_LOCK:
+        SESSIONS.pop(sid, None)
+
+
+def parse_form(body: bytes) -> Dict[str, str]:
+    from urllib.parse import parse_qs
+    parsed = parse_qs(body.decode("utf-8", "ignore"), keep_blank_values=True)
+    return {k: v[-1] if v else "" for k, v in parsed.items()}
+
+
+def render_auth_page(mode: str, error: str = "") -> bytes:
+    is_register = mode == "register"
+    title = "注册管理员" if is_register else "登录面板"
+    action = "/register" if is_register else "/login"
+    button = "创建账号" if is_register else "登录"
+    hint = "首次访问请创建管理员账号。账号信息保存在本机，不会上传。" if is_register else "请输入安装后注册的管理员账号。"
+    error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
+    body = f"""<!doctype html><html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title} · Mini Komari</title>
+<style>
+:root {{ color-scheme: light; --bg:#f5f7fb; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb; --accent:#4f6f9f; --danger:#dc2626; }}
+*{{box-sizing:border-box}} body{{margin:0;min-height:100vh;display:grid;place-items:center;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:linear-gradient(180deg,#fff,#eef2f7);color:var(--text)}}
+.card{{width:min(420px,calc(100vw - 28px));background:var(--card);border:1px solid var(--line);border-radius:24px;padding:26px;box-shadow:0 18px 50px rgba(15,23,42,.10)}} h1{{margin:0 0 8px;font-size:28px;letter-spacing:-.03em}} p{{margin:0 0 18px;color:var(--muted);line-height:1.6}} label{{display:block;color:var(--muted);font-size:13px;margin:12px 0 6px}} input{{width:100%;border:1px solid #d1d5db;border-radius:13px;padding:12px;background:#fff;color:var(--text);outline:none}} input:focus{{border-color:var(--accent);box-shadow:0 0 0 3px #eef3fb}} button{{width:100%;margin-top:18px;border:1px solid #cbd5e1;background:linear-gradient(180deg,#fff,#eef2f7);color:#1f2937;font-weight:800;border-radius:13px;padding:12px;cursor:pointer}} .error{{background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:12px;padding:10px;margin:12px 0}}
+</style></head><body><form class="card" method="post" action="{action}">
+<h1>{title}</h1><p>{hint}</p>{error_html}
+<label>用户名</label><input name="username" autocomplete="username" required autofocus>
+<label>密码</label><input name="password" type="password" autocomplete="{'new-password' if is_register else 'current-password'}" required>
+<button type="submit">{button}</button>
+</form></body></html>"""
+    return body.encode("utf-8")
+
+
+def redirect_body(location: str) -> bytes:
+    return f'Redirecting to {html.escape(location)}\n'.encode()
+
+
+def set_data_file(path: str | Path) -> None:
+    global DATA_FILE
+    DATA_FILE = Path(path)
+
+
 def load_nodes() -> None:
     if not DATA_FILE.exists():
         return
@@ -370,7 +499,7 @@ def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw
 .form{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}} label{{display:block;color:var(--muted);font-size:13px;margin-bottom:5px}} input{{width:100%;border:1px solid var(--line-strong);background:#fff;color:var(--text);border-radius:12px;padding:10px 11px;outline:none;transition:border-color .15s,box-shadow .15s}} input:focus{{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}} .inline-field{{display:flex;gap:7px}} .inline-field input{{min-width:0}} .inline-field button{{white-space:nowrap;padding:10px 11px}} pre{{white-space:pre-wrap;word-break:break-all;background:#f8fafc;border:1px solid var(--line);border-radius:14px;padding:13px;color:#334155}} button{{border:1px solid #cbd5e1;background:linear-gradient(180deg,#fff,#eef2f7);color:#1f2937;font-weight:800;border-radius:12px;padding:10px 13px;cursor:pointer;box-shadow:0 3px 10px rgba(15,23,42,.06)}} button:hover{{background:linear-gradient(180deg,#fff,#e5eaf2)}} button.danger{{background:#fff;color:var(--bad);border:1px solid #fecaca;padding:6px 9px;box-shadow:none}}
 @media(max-width:860px){{.metrics,.stats{{grid-template-columns:1fr 1fr}}.hero{{flex-direction:column;align-items:flex-start}}.refresh-note{{text-align:left}}}} @media(max-width:520px){{.metrics,.stats,.form{{grid-template-columns:1fr}}}}
 </style></head><body><div class="wrap">
-<div class="hero"><div><h1>Mini Komari Master</h1><div class="sub">主控面板 · 节点 {total_nodes} 个 · 在线 {online_nodes} · 离线 {offline_nodes} · <a href="/api/nodes">JSON API</a></div></div><div><div class="sub">自动刷新 {refresh}s</div><div class="refresh-note" id="refreshNote">输入时自动暂停刷新</div></div></div>
+<div class="hero"><div><h1>Mini Komari Master</h1><div class="sub">主控面板 · 节点 {total_nodes} 个 · 在线 {online_nodes} · 离线 {offline_nodes} · <a href="/api/nodes">JSON API</a> · <a href="/logout">退出登录</a></div></div><div><div class="sub">自动刷新 {refresh}s</div><div class="refresh-note" id="refreshNote">输入时自动暂停刷新</div></div></div>
 <section class="stats" aria-label="节点统计">
   <div class="stat"><b>总节点</b><strong>{total_nodes}</strong><small>当前已登记节点</small></div>
   <div class="stat online"><b>在线</b><strong>{online_nodes}</strong><small>最近上报正常</small></div>
@@ -492,35 +621,38 @@ class MasterHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def auth_required(self) -> bool:
-        return bool(getattr(self.server, "auth_user", "") or getattr(self.server, "auth_pass", ""))
-
-    def check_basic_auth(self) -> bool:
-        if not self.auth_required():
-            return True
-        auth = self.headers.get("Authorization", "")
-        if not auth.startswith("Basic "):
-            return False
-        try:
-            decoded = base64.b64decode(auth.split(" ", 1)[1], validate=True).decode("utf-8")
-            user, password = decoded.split(":", 1)
-        except Exception:
-            return False
-        expected_user = str(getattr(self.server, "auth_user", ""))
-        expected_pass = str(getattr(self.server, "auth_pass", ""))
-        return hmac.compare_digest(user, expected_user) and hmac.compare_digest(password, expected_pass)
-
-    def require_basic_auth(self) -> bool:
-        if self.check_basic_auth():
-            return True
-        body = b"Authentication required\n"
-        self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="Mini Komari"')
+    def send_redirect(self, location: str, cookie: str = "") -> None:
+        body = redirect_body(location)
+        self.send_response(302)
+        self.send_header("Location", location)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(body)
+
+    def session_id(self) -> str:
+        raw = self.headers.get("Cookie", "")
+        if not raw:
+            return ""
+        try:
+            cookie = http.cookies.SimpleCookie(raw)
+            return cookie.get("mini_komari_session").value if cookie.get("mini_komari_session") else ""
+        except Exception:
+            return ""
+
+    def is_authenticated(self) -> bool:
+        return valid_session(self.session_id())
+
+    def require_dashboard_auth(self) -> bool:
+        if not load_user():
+            self.send_redirect("/register")
+            return False
+        if self.is_authenticated():
+            return True
+        self.send_redirect("/login")
         return False
 
     def do_GET(self) -> None:
@@ -528,7 +660,25 @@ class MasterHandler(BaseHTTPRequestHandler):
         if path == "/health":
             self.send_body(200, b"OK\n", "text/plain; charset=utf-8")
             return
-        if not self.require_basic_auth():
+        if path == "/register":
+            if load_user():
+                self.send_redirect("/login")
+            else:
+                self.send_body(200, render_auth_page("register"), "text/html; charset=utf-8")
+            return
+        if path == "/login":
+            if not load_user():
+                self.send_redirect("/register")
+            elif self.is_authenticated():
+                self.send_redirect("/")
+            else:
+                self.send_body(200, render_auth_page("login"), "text/html; charset=utf-8")
+            return
+        if path == "/logout":
+            clear_session(self.session_id())
+            self.send_redirect("/login", "mini_komari_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
+            return
+        if not self.require_dashboard_auth():
             return
         data = list_nodes()
         if path in ("/api/nodes", "/api/status"):
@@ -563,8 +713,31 @@ class MasterHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path in ("/register", "/login"):
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            body = self.rfile.read(min(length, 100_000)) if length > 0 else b""
+            form = parse_form(body)
+            username = form.get("username", "").strip()
+            password = form.get("password", "")
+            if path == "/register":
+                if load_user():
+                    self.send_redirect("/login")
+                    return
+                if not username or not password:
+                    self.send_body(400, render_auth_page("register", "用户名和密码不能为空"), "text/html; charset=utf-8")
+                    return
+                save_user(username, password)
+                sid = create_session()
+                self.send_redirect("/", f"mini_komari_session={sid}; Path=/; Max-Age={SESSION_TTL}; HttpOnly; SameSite=Lax")
+                return
+            if not verify_user(username, password):
+                self.send_body(401, render_auth_page("login", "用户名或密码错误"), "text/html; charset=utf-8")
+                return
+            sid = create_session()
+            self.send_redirect("/", f"mini_komari_session={sid}; Path=/; Max-Age={SESSION_TTL}; HttpOnly; SameSite=Lax")
+            return
         if path == "/api/delete":
-            if not self.require_basic_auth():
+            if not self.require_dashboard_auth():
                 return
             self.handle_delete()
             return
@@ -596,6 +769,8 @@ class MasterHandler(BaseHTTPRequestHandler):
 
 def run_master(args: argparse.Namespace, standalone: bool = False) -> None:
     set_data_file(getattr(args, "data_file", "") or os.environ.get("MINI_KOMARI_DATA_FILE", DATA_FILE))
+    set_user_file(getattr(args, "user_file", "") or os.environ.get("MINI_KOMARI_USER_FILE", USER_FILE))
+    ensure_legacy_user(getattr(args, "auth_user", ""), getattr(args, "auth_pass", ""))
     load_nodes()
     if standalone:
         status = collect_status(args.node_id, args.name, getattr(args, "group", "默认"))
@@ -625,8 +800,6 @@ def run_master(args: argparse.Namespace, standalone: bool = False) -> None:
     httpd.public_url = getattr(args, "public_url", "") or os.environ.get("MINI_KOMARI_PUBLIC_URL", "")
     httpd.raw_base = getattr(args, "raw_base", "") or os.environ.get("MINI_KOMARI_RAW_BASE", "")
     httpd.token_hint = httpd.token
-    httpd.auth_user = getattr(args, "auth_user", "") or os.environ.get("MINI_KOMARI_AUTH_USER", "")
-    httpd.auth_pass = getattr(args, "auth_pass", "") or os.environ.get("MINI_KOMARI_AUTH_PASS", "")
     print(f"Mini Komari master listening on http://{args.host}:{args.port}", flush=True)
     httpd.serve_forever()
 
@@ -670,8 +843,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_master.add_argument("--public-url", default=os.environ.get("MINI_KOMARI_PUBLIC_URL", ""), help="public master URL shown in generated agent command")
     p_master.add_argument("--raw-base", default=os.environ.get("MINI_KOMARI_RAW_BASE", ""), help="GitHub raw base URL for install.sh")
     p_master.add_argument("--data-file", default=os.environ.get("MINI_KOMARI_DATA_FILE", str(DATA_FILE)), help="node persistence JSON file")
-    p_master.add_argument("--auth-user", default=os.environ.get("MINI_KOMARI_AUTH_USER", ""), help="Basic Auth username for dashboard/API")
-    p_master.add_argument("--auth-pass", default=os.environ.get("MINI_KOMARI_AUTH_PASS", ""), help="Basic Auth password for dashboard/API")
+    p_master.add_argument("--user-file", default=os.environ.get("MINI_KOMARI_USER_FILE", str(USER_FILE)), help="dashboard user JSON file")
+    p_master.add_argument("--auth-user", default=os.environ.get("MINI_KOMARI_AUTH_USER", ""), help="legacy Basic Auth username migrated to web login")
+    p_master.add_argument("--auth-pass", default=os.environ.get("MINI_KOMARI_AUTH_PASS", ""), help="legacy Basic Auth password migrated to web login")
     p_master.add_argument("--quiet", action="store_true", default=os.environ.get("MINI_KOMARI_QUIET") == "1")
 
     p_agent = sub.add_parser("agent", help="run agent reporter")
@@ -696,6 +870,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_single.add_argument("--public-url", default=os.environ.get("MINI_KOMARI_PUBLIC_URL", ""))
     p_single.add_argument("--raw-base", default=os.environ.get("MINI_KOMARI_RAW_BASE", ""))
     p_single.add_argument("--data-file", default=os.environ.get("MINI_KOMARI_DATA_FILE", str(DATA_FILE)))
+    p_single.add_argument("--user-file", default=os.environ.get("MINI_KOMARI_USER_FILE", str(USER_FILE)))
     p_single.add_argument("--auth-user", default=os.environ.get("MINI_KOMARI_AUTH_USER", ""))
     p_single.add_argument("--auth-pass", default=os.environ.get("MINI_KOMARI_AUTH_PASS", ""))
     p_single.add_argument("--quiet", action="store_true", default=os.environ.get("MINI_KOMARI_QUIET") == "1")

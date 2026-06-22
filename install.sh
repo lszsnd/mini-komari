@@ -26,13 +26,13 @@ usage() {
 Mini Komari installer
 
 用法：
-  bash install.sh master [端口] [TOKEN] [主控公网URL] [面板用户] [面板密码]
+  bash install.sh master [端口] [TOKEN] [主控公网URL]
   bash install.sh agent  <主控URL> [TOKEN] [节点名] [分组]
   bash install.sh standalone [端口]
   bash install.sh update
 
 示例：
-  bash install.sh master 6060 mytoken http://1.2.3.4:6060 admin strong-password
+  bash install.sh master 6060 mytoken
   bash install.sh agent http://1.2.3.4:6060 mytoken hk-node-1 香港
 
 环境变量：
@@ -73,6 +73,21 @@ resolve_raw_base() {
     fi
 }
 
+detect_public_ip() {
+    local ip=""
+    for url in \
+        https://api.ipify.org \
+        https://ifconfig.me/ip \
+        https://icanhazip.com; do
+        ip="$(curl -fsS --max-time 4 "$url" 2>/dev/null | tr -d '[:space:]' || true)"
+        if printf '%s' "$ip" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+            printf '%s\n' "$ip"
+            return 0
+        fi
+    done
+    hostname -I 2>/dev/null | awk '{print $1}'
+}
+
 fetch_app() {
     mkdir -p "$INSTALL_DIR"
     if [ -f "$SCRIPT_DIR/mini_komari.py" ]; then
@@ -91,11 +106,13 @@ write_master_service() {
     local port="${2:-${MINI_KOMARI_PORT:-6060}}"
     local token="${3:-${MINI_KOMARI_TOKEN:-}}"
     local public_url="${4:-${MINI_KOMARI_PUBLIC_URL:-}}"
-    local auth_user="${5:-${MINI_KOMARI_AUTH_USER:-admin}}"
-    local auth_pass="${6:-${MINI_KOMARI_AUTH_PASS:-}}"
-    [ -n "$auth_pass" ] || auth_pass="$(random_password)"
     resolve_raw_base
-    [ -n "$public_url" ] || public_url="http://你的主控IP:$port"
+    if [ -z "$public_url" ]; then
+        local detected_ip
+        detected_ip="$(detect_public_ip)"
+        [ -n "$detected_ip" ] || detected_ip="你的主控IP"
+        public_url="http://$detected_ip:$port"
+    fi
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Mini Komari Master
@@ -108,9 +125,8 @@ Environment=MINI_KOMARI_TOKEN=$token
 Environment=MINI_KOMARI_PUBLIC_URL=$public_url
 Environment=MINI_KOMARI_RAW_BASE=$RAW_BASE
 Environment=MINI_KOMARI_DATA_FILE=$INSTALL_DIR/nodes.json
-Environment=MINI_KOMARI_AUTH_USER=$auth_user
-Environment=MINI_KOMARI_AUTH_PASS=$auth_pass
-ExecStart=/usr/bin/env python3 $INSTALL_DIR/mini_komari.py master --host 0.0.0.0 --port $port --token $token --public-url $public_url --raw-base $RAW_BASE --data-file $INSTALL_DIR/nodes.json --auth-user $auth_user --auth-pass $auth_pass --quiet
+Environment=MINI_KOMARI_USER_FILE=$INSTALL_DIR/user.json
+ExecStart=/usr/bin/env python3 $INSTALL_DIR/mini_komari.py master --host 0.0.0.0 --port $port --token $token --public-url $public_url --raw-base $RAW_BASE --data-file $INSTALL_DIR/nodes.json --user-file $INSTALL_DIR/user.json --quiet
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
@@ -123,8 +139,7 @@ WantedBy=multi-user.target
 EOF
     echo "$port" > "$INSTALL_DIR/PORT"
     echo "master" > "$INSTALL_DIR/MODE"
-    printf 'user=%s\npassword=%s\n' "$auth_user" "$auth_pass" > "$INSTALL_DIR/AUTH"
-    chmod 600 "$INSTALL_DIR/AUTH"
+    echo "$public_url" > "$INSTALL_DIR/PUBLIC_URL"
 }
 
 write_agent_service() {
@@ -249,9 +264,8 @@ main() {
     info "安装完成：$MODE"
     case "$MODE" in
         master)
-            echo "  面板: ${4:-${MINI_KOMARI_PUBLIC_URL:-http://你的主控IP:${2:-${MINI_KOMARI_PORT:-6060}}}}/"
-            echo "  登录用户: ${5:-${MINI_KOMARI_AUTH_USER:-admin}}"
-            echo "  登录密码: ${6:-${MINI_KOMARI_AUTH_PASS:-已保存到 /opt/mini-komari/AUTH}}"
+            echo "  面板: $(cat "$INSTALL_DIR/PUBLIC_URL" 2>/dev/null || printf '%s' "${4:-${MINI_KOMARI_PUBLIC_URL:-http://你的主控IP:${2:-${MINI_KOMARI_PORT:-6060}}}}")/"
+            echo "  首次打开网页后，请注册管理员账号并登录"
             echo "  打开主控网页后，可直接在页面里生成 Agent 安装命令"
             ;;
         agent)
