@@ -935,31 +935,37 @@ class MasterHandler(BaseHTTPRequestHandler):
             self.send_body(400, f"bad json: {exc}\n".encode(), "text/plain; charset=utf-8")
 
 
+def start_local_collector(node_id: str, name: str, group: str, interval: int, label: str) -> None:
+    def update_once() -> None:
+        status = collect_status(node_id, name, group)
+        status["last_seen"] = now_iso()
+        status["last_seen_ts"] = time.time()
+        with NODES_LOCK:
+            NODES[str(status["id"])] = status
+        save_nodes()
+
+    update_once()
+
+    def updater() -> None:
+        while True:
+            try:
+                update_once()
+            except Exception as exc:
+                print(f"{label} update failed: {exc}", file=sys.stderr, flush=True)
+            time.sleep(max(1, interval))
+
+    threading.Thread(target=updater, daemon=True).start()
+
+
 def run_master(args: argparse.Namespace, standalone: bool = False) -> None:
     set_data_file(getattr(args, "data_file", "") or os.environ.get("MINI_KOMARI_DATA_FILE", DATA_FILE))
     set_user_file(getattr(args, "user_file", "") or os.environ.get("MINI_KOMARI_USER_FILE", USER_FILE))
     ensure_legacy_user(getattr(args, "auth_user", ""), getattr(args, "auth_pass", ""))
     load_nodes()
     if standalone:
-        status = collect_status(args.node_id, args.name, getattr(args, "group", "默认"))
-        status["last_seen"] = now_iso()
-        status["last_seen_ts"] = time.time()
-        with NODES_LOCK:
-            NODES[str(status["id"])] = status
-        save_nodes()
-        def updater() -> None:
-            while True:
-                try:
-                    s = collect_status(args.node_id, args.name, getattr(args, "group", "默认"))
-                    s["last_seen"] = now_iso()
-                    s["last_seen_ts"] = time.time()
-                    with NODES_LOCK:
-                        NODES[str(s["id"])] = s
-                    save_nodes()
-                except Exception as exc:
-                    print(f"standalone update failed: {exc}", file=sys.stderr, flush=True)
-                time.sleep(max(1, args.interval))
-        threading.Thread(target=updater, daemon=True).start()
+        start_local_collector(args.node_id, args.name, getattr(args, "group", "默认"), args.interval, "standalone")
+    elif getattr(args, "self_node", True):
+        start_local_collector(args.self_node_id, args.self_name, args.self_group, args.self_interval, "master self-node")
 
     httpd = ThreadingHTTPServer((args.host, args.port), MasterHandler)
     httpd.refresh = max(1, args.refresh)
@@ -1018,6 +1024,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_master.add_argument("--user-file", default=os.environ.get("MINI_KOMARI_USER_FILE", str(USER_FILE)), help="dashboard user JSON file")
     p_master.add_argument("--auth-user", default=os.environ.get("MINI_KOMARI_AUTH_USER", ""), help="legacy Basic Auth username migrated to web login")
     p_master.add_argument("--auth-pass", default=os.environ.get("MINI_KOMARI_AUTH_PASS", ""), help="legacy Basic Auth password migrated to web login")
+    p_master.add_argument("--self-node", action=argparse.BooleanOptionalAction, default=os.environ.get("MINI_KOMARI_SELF_NODE", "1") != "0", help="collect and show the master host as a local node")
+    p_master.add_argument("--self-node-id", default=os.environ.get("MINI_KOMARI_SELF_NODE_ID") or f"master-{socket.gethostname()}")
+    p_master.add_argument("--self-name", default=os.environ.get("MINI_KOMARI_SELF_NAME") or f"主控-{socket.gethostname()}")
+    p_master.add_argument("--self-group", default=os.environ.get("MINI_KOMARI_SELF_GROUP", "主控"))
+    p_master.add_argument("--self-interval", type=int, default=int(os.environ.get("MINI_KOMARI_SELF_INTERVAL", os.environ.get("MINI_KOMARI_INTERVAL", "3"))))
     p_master.add_argument("--quiet", action="store_true", default=os.environ.get("MINI_KOMARI_QUIET") == "1")
 
     p_agent = sub.add_parser("agent", help="run agent reporter")
