@@ -626,16 +626,10 @@ def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw
     nodes_html = str(sections["nodes_html"])
     public_url = public_url.rstrip("/")
     raw_base = raw_base.rstrip("/")
-    token_hint = token_hint or "你的TOKEN"
+    token_hint = ""
     install_url = f"{raw_base}/install.sh" if raw_base else "https://raw.githubusercontent.com/你的用户名/你的仓库/main/install.sh"
     master_url = public_url or "http://主控IP:6060"
-    agent_cmd = "curl -fsSL {} | MINI_KOMARI_INTERVAL=3 bash -s -- agent {} {} {} {}".format(
-        shlex.quote(install_url),
-        shlex.quote(master_url),
-        shlex.quote(token_hint),
-        shlex.quote("节点名"),
-        shlex.quote("默认"),
-    )
+    agent_cmd = "请填写节点名、分组和 Token，或点击“生成”创建强 Token。"
     body = f"""<!doctype html><html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mini Komari Master</title>
@@ -657,9 +651,9 @@ def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw
   <p>先确认主控地址能被被控 VPS 访问，然后填写节点名，复制命令到被控 VPS 执行。</p>
   <div class="form">
     <div><label>主控地址</label><input id="masterUrl" value="{html.escape(master_url)}"></div>
-    <div><label>节点名</label><input id="nodeName" value="hk-node-1"></div>
-    <div><label>分组</label><input id="nodeGroup" value="香港"></div>
-    <div><label>Token</label><div class="inline-field"><input id="token" type="password" autocomplete="off" value="{html.escape(token_hint)}"><button type="button" onclick="toggleToken()" id="toggleTokenBtn">显示</button></div></div>
+    <div><label>节点名</label><input id="nodeName" placeholder="例如：美国-FREE" value=""></div>
+    <div><label>分组</label><input id="nodeGroup" placeholder="例如：US" value=""></div>
+    <div><label>Token</label><div class="inline-field"><input id="token" type="password" autocomplete="off" placeholder="点击生成或手动填写" value=""><button type="button" onclick="toggleToken()" id="toggleTokenBtn">显示</button><button type="button" onclick="generateToken()">生成</button></div></div>
   </div>
   <pre id="agentCmd">{html.escape(agent_cmd)}</pre>
   <button onclick="copyCmd()">复制安装命令</button>
@@ -678,11 +672,41 @@ function shellQuote(value) {{
 }}
 function buildCmd() {{
   const master = document.getElementById('masterUrl').value.trim().replace(/\/$/, '');
-  const node = document.getElementById('nodeName').value.trim() || 'node-1';
-  const group = document.getElementById('nodeGroup').value.trim() || '默认';
-  const token = document.getElementById('token').value.trim() || '你的TOKEN';
+  const node = document.getElementById('nodeName').value.trim();
+  const group = document.getElementById('nodeGroup').value.trim();
+  const token = document.getElementById('token').value.trim();
+  if (!master || !node || !group || !token) {{
+    document.getElementById('agentCmd').textContent = '请填写节点名、分组和 Token，或点击“生成”创建强 Token。';
+    return '';
+  }}
   const args = ['agent', master, token, node, group].map(shellQuote).join(' ');
-  document.getElementById('agentCmd').textContent = `curl -fsSL ${{shellQuote(installUrl)}} | MINI_KOMARI_INTERVAL=3 bash -s -- ${{args}}`;
+  const cmd = `curl -fsSL ${{shellQuote(installUrl)}} | MINI_KOMARI_INTERVAL=3 bash -s -- ${{args}}`;
+  document.getElementById('agentCmd').textContent = cmd;
+  return cmd;
+}}
+function generateToken() {{
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
+  const bytes = new Uint8Array(32);
+  if (window.crypto && window.crypto.getRandomValues) {{
+    window.crypto.getRandomValues(bytes);
+  }} else {{
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }}
+  let token = '';
+  for (const b of bytes) token += chars[b % chars.length];
+  document.getElementById('token').value = token;
+  buildCmd();
+  markEditing();
+}}
+function resetGenerator() {{
+  document.getElementById('nodeName').value = '';
+  document.getElementById('nodeGroup').value = '';
+  document.getElementById('token').value = '';
+  const tokenInput = document.getElementById('token');
+  const tokenBtn = document.getElementById('toggleTokenBtn');
+  tokenInput.type = 'password';
+  tokenBtn.textContent = '显示';
+  buildCmd();
 }}
 function fallbackCopy(text) {{
   const ta = document.createElement('textarea');
@@ -699,19 +723,25 @@ function fallbackCopy(text) {{
   return ok;
 }}
 async function copyCmd() {{
-  buildCmd();
-  const text = document.getElementById('agentCmd').textContent;
+  const text = buildCmd();
+  if (!text) {{
+    alert('请先填写节点名、分组和 Token，或点击“生成”创建强 Token。');
+    return;
+  }}
   try {{
     if (navigator.clipboard && window.isSecureContext) {{
       await navigator.clipboard.writeText(text);
-      alert('已复制');
+      alert('已复制。该命令仅显示一次，请尽快安装。确认后节点名、分组和 Token 将清空。');
+      resetGenerator();
       return;
     }}
   }} catch (e) {{}}
   if (fallbackCopy(text)) {{
-    alert('已复制');
+    alert('已复制。该命令仅显示一次，请尽快安装。确认后节点名、分组和 Token 将清空。');
+    resetGenerator();
   }} else {{
-    prompt('自动复制失败，请手动复制下面这条命令：', text);
+    prompt('自动复制失败，请手动复制下面这条命令。该命令仅显示一次，请尽快安装；关闭后表单将清空。', text);
+    resetGenerator();
   }}
 }}
 function toggleToken() {{
