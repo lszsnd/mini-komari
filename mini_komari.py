@@ -442,19 +442,13 @@ def pct_bar(percent: float) -> str:
     return f'<div class="bar"><span style="width:{p}%"></span></div>'
 
 
-def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw_base: str = "", token_hint: str = "") -> bytes:
+def render_agent_sections(data: Dict[str, object]) -> Dict[str, object]:
     nodes = data.get("nodes", [])
     total_nodes = len(nodes) if isinstance(nodes, list) else int(data.get("count", 0) or 0)
     online_nodes = sum(1 for n in nodes if isinstance(n, dict) and bool(n.get("online")))
     offline_nodes = max(0, total_nodes - online_nodes)
     group_names = {str(n.get("group", "默认") or "默认") for n in nodes if isinstance(n, dict)}
     group_count = len(group_names)
-    public_url = public_url.rstrip("/")
-    raw_base = raw_base.rstrip("/")
-    token_hint = token_hint or "你的TOKEN"
-    install_url = f"{raw_base}/install.sh" if raw_base else "https://raw.githubusercontent.com/你的用户名/你的仓库/main/install.sh"
-    master_url = public_url or "http://主控IP:6060"
-    agent_cmd = f"curl -fsSL {install_url} | bash -s -- agent {master_url} {token_hint} 节点名 默认"
     grouped_cards: Dict[str, list[str]] = {}
     for n in nodes:
         cpu = n.get("cpu", {})
@@ -482,11 +476,40 @@ def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw
           <div class="foot">系统运行 {html.escape(str(sysinfo.get('uptime','')))} · 最后上报 {n.get('last_seen_age','?')} 秒前 · {html.escape(str(sysinfo.get('os','')))}</div>
         </section>
         """)
+    stats_html = f"""
+  <div class="stat"><b>总节点</b><strong>{total_nodes}</strong><small>当前已登记节点</small></div>
+  <div class="stat online"><b>在线</b><strong>{online_nodes}</strong><small>最近上报正常</small></div>
+  <div class="stat offline"><b>离线</b><strong>{offline_nodes}</strong><small>超过离线阈值</small></div>
+  <div class="stat"><b>分组</b><strong>{group_count}</strong><small>节点分组数量</small></div>"""
     group_html = "".join(
         f'<section class="group"><h2>{html.escape(group)} <span>{len(cards)} 台</span></h2>{"".join(cards)}</section>'
         for group, cards in sorted(grouped_cards.items())
     )
     empty = "" if grouped_cards else '<section class="empty">还没有 Agent 上报。先在上面生成安装命令，再去被控机执行。</section>'
+    return {
+        "total_nodes": total_nodes,
+        "online_nodes": online_nodes,
+        "offline_nodes": offline_nodes,
+        "group_count": group_count,
+        "summary": f"主控面板 · 节点 {total_nodes} 个 · 在线 {online_nodes} · 离线 {offline_nodes}",
+        "stats_html": stats_html,
+        "nodes_html": f"{group_html}{empty}",
+    }
+
+
+def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw_base: str = "", token_hint: str = "") -> bytes:
+    sections = render_agent_sections(data)
+    total_nodes = sections["total_nodes"]
+    online_nodes = sections["online_nodes"]
+    offline_nodes = sections["offline_nodes"]
+    stats_html = str(sections["stats_html"])
+    nodes_html = str(sections["nodes_html"])
+    public_url = public_url.rstrip("/")
+    raw_base = raw_base.rstrip("/")
+    token_hint = token_hint or "你的TOKEN"
+    install_url = f"{raw_base}/install.sh" if raw_base else "https://raw.githubusercontent.com/你的用户名/你的仓库/main/install.sh"
+    master_url = public_url or "http://主控IP:6060"
+    agent_cmd = f"curl -fsSL {install_url} | bash -s -- agent {master_url} {token_hint} 节点名 默认"
     body = f"""<!doctype html><html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mini Komari Master</title>
@@ -499,12 +522,9 @@ def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw
 .form{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}} label{{display:block;color:var(--muted);font-size:13px;margin-bottom:5px}} input{{width:100%;border:1px solid var(--line-strong);background:#fff;color:var(--text);border-radius:12px;padding:10px 11px;outline:none;transition:border-color .15s,box-shadow .15s}} input:focus{{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}} .inline-field{{display:flex;gap:7px}} .inline-field input{{min-width:0}} .inline-field button{{white-space:nowrap;padding:10px 11px}} pre{{white-space:pre-wrap;word-break:break-all;background:#f8fafc;border:1px solid var(--line);border-radius:14px;padding:13px;color:#334155}} button{{border:1px solid #cbd5e1;background:linear-gradient(180deg,#fff,#eef2f7);color:#1f2937;font-weight:800;border-radius:12px;padding:10px 13px;cursor:pointer;box-shadow:0 3px 10px rgba(15,23,42,.06)}} button:hover{{background:linear-gradient(180deg,#fff,#e5eaf2)}} button.danger{{background:#fff;color:var(--bad);border:1px solid #fecaca;padding:6px 9px;box-shadow:none}}
 @media(max-width:860px){{.metrics,.stats{{grid-template-columns:1fr 1fr}}.hero{{flex-direction:column;align-items:flex-start}}.refresh-note{{text-align:left}}}} @media(max-width:520px){{.metrics,.stats,.form{{grid-template-columns:1fr}}}}
 </style></head><body><div class="wrap">
-<div class="hero"><div><h1>Mini Komari Master</h1><div class="sub">主控面板 · 节点 {total_nodes} 个 · 在线 {online_nodes} · 离线 {offline_nodes} · <a href="/api/nodes">JSON API</a> · <a href="/logout">退出登录</a></div></div><div><div class="sub">自动刷新 {refresh}s</div><div class="refresh-note" id="refreshNote">输入时自动暂停刷新</div></div></div>
-<section class="stats" aria-label="节点统计">
-  <div class="stat"><b>总节点</b><strong>{total_nodes}</strong><small>当前已登记节点</small></div>
-  <div class="stat online"><b>在线</b><strong>{online_nodes}</strong><small>最近上报正常</small></div>
-  <div class="stat offline"><b>离线</b><strong>{offline_nodes}</strong><small>超过离线阈值</small></div>
-  <div class="stat"><b>分组</b><strong>{group_count}</strong><small>节点分组数量</small></div>
+<div class="hero"><div><h1>Mini Komari Master</h1><div class="sub"><span id="summaryText">主控面板 · 节点 {total_nodes} 个 · 在线 {online_nodes} · 离线 {offline_nodes}</span> · <a href="/api/nodes">JSON API</a> · <a href="/logout">退出登录</a></div></div><div><div class="sub">自动刷新 Agent 数据 {refresh}s</div><div class="refresh-note" id="refreshNote">只刷新节点数据，输入时自动暂停</div></div></div>
+<section class="stats" id="statsPanel" aria-label="节点统计">
+{stats_html}
 </section>
 <section class="generator">
   <h2>生成被控 Agent 安装命令</h2>
@@ -519,7 +539,7 @@ def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw
   <button onclick="copyCmd()">复制安装命令</button>
   <small>安装脚本地址：{html.escape(install_url)}</small>
 </section>
-{group_html}{empty}
+<div id="nodesPanel">{nodes_html}</div>
 <script>
 const installUrl = {json.dumps(install_url)};
 const refreshSeconds = {int(refresh)};
@@ -596,9 +616,22 @@ function markIdleSoon() {{
   el.addEventListener('focus', markEditing);
   el.addEventListener('blur', markIdleSoon);
 }});
-window.setInterval(() => {{
-  if (!editing && !document.querySelector('input:focus')) location.reload();
-}}, Math.max(1, refreshSeconds) * 1000);
+async function refreshAgentData() {{
+  if (editing || document.querySelector('input:focus')) return;
+  const note = document.getElementById('refreshNote');
+  try {{
+    const r = await fetch('/api/agent-fragment', {{cache:'no-store'}});
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    document.getElementById('summaryText').textContent = data.summary;
+    document.getElementById('statsPanel').innerHTML = data.stats_html;
+    document.getElementById('nodesPanel').innerHTML = data.nodes_html;
+    if (note) note.textContent = 'Agent 数据已更新：' + new Date().toLocaleTimeString();
+  }} catch (e) {{
+    if (note) note.textContent = 'Agent 数据刷新失败，稍后重试';
+  }}
+}}
+window.setInterval(refreshAgentData, Math.max(1, refreshSeconds) * 1000);
 buildCmd();
 </script>
 </div></body></html>"""
@@ -683,6 +716,9 @@ class MasterHandler(BaseHTTPRequestHandler):
         data = list_nodes()
         if path in ("/api/nodes", "/api/status"):
             self.send_body(200, json.dumps(data, ensure_ascii=False, indent=2).encode(), "application/json; charset=utf-8")
+        elif path == "/api/agent-fragment":
+            fragment = render_agent_sections(data)
+            self.send_body(200, json.dumps(fragment, ensure_ascii=False).encode(), "application/json; charset=utf-8")
         elif path == "/":
             self.send_body(200, render_html(
                 data,
