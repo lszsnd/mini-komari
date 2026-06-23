@@ -26,7 +26,9 @@ import http.cookies
 import json
 import os
 import platform
+import re
 import secrets
+import shlex
 import shutil
 import socket
 import sys
@@ -37,7 +39,7 @@ import urllib.request
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 from urllib.parse import urlparse
 
 START_TIME = time.time()
@@ -51,6 +53,61 @@ SESSIONS_LOCK = threading.Lock()
 DATA_FILE = Path(os.environ.get("MINI_KOMARI_DATA_FILE", "/opt/mini-komari/nodes.json"))
 USER_FILE = Path(os.environ.get("MINI_KOMARI_USER_FILE", "/opt/mini-komari/user.json"))
 SESSION_TTL = 86400 * 7
+SAFE_NODE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,128}$")
+
+
+def clean_text(value: Any, default: str = "", limit: int = 160) -> str:
+    if value is None:
+        value = default
+    text = str(value).replace("\x00", "").strip()
+    text = " ".join(text.splitlines())
+    if not text:
+        text = default
+    return text[:limit]
+
+
+def clean_dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def clean_int(value: Any, default: int = 0, min_value: int = 0, max_value: int = 10**18) -> int:
+    try:
+        if isinstance(value, bool):
+            raise ValueError
+        number = int(float(value))
+    except Exception:
+        number = default
+    return max(min_value, min(max_value, number))
+
+
+def clean_float(value: Any, default: float = 0.0, min_value: float = 0.0, max_value: float = 10**18) -> float:
+    try:
+        if isinstance(value, bool):
+            raise ValueError
+        number = float(value)
+    except Exception:
+        number = default
+    return round(max(min_value, min(max_value, number)), 1)
+
+
+def clean_percent(value: Any) -> float:
+    return clean_float(value, 0.0, 0.0, 100.0)
+
+
+def clean_load(value: Any) -> list[float]:
+    if not isinstance(value, list):
+        return [0.0, 0.0, 0.0]
+    cleaned = [clean_float(item, 0.0, 0.0, 100000.0) for item in value[:3]]
+    while len(cleaned) < 3:
+        cleaned.append(0.0)
+    return cleaned
+
+
+def sanitize_node_id(value: Any) -> str:
+    node_id = clean_text(value, "unknown", 128)
+    if not SAFE_NODE_ID_RE.fullmatch(node_id):
+        raise ValueError("node id may only contain letters, numbers, dot, dash, underscore, colon and @")
+    return node_id
 
 
 def read_text(path: str, default: str = "") -> str:
@@ -251,10 +308,67 @@ def sign_body(body: bytes, token: str) -> str:
 
 
 def verify_signature(body: bytes, token: str, signature: str) -> bool:
-    if not token:
-        return True
+    if not token or not signature:
+        return False
     expected = sign_body(body, token)
     return hmac.compare_digest(expected, signature or "")
+
+
+def sanitize_report_payload(payload: Any) -> Dict[str, object]:
+    if not isinstance(payload, dict):
+        raise ValueError("report payload must be an object")
+    node_id = sanitize_node_id(payload.get("id") or payload.get("hostname") or "unknown")
+    hostname = clean_text(payload.get("hostname"), node_id, 128)
+    system = clean_dict(payload.get("system"))
+    cpu = clean_dict(payload.get("cpu"))
+    memory = clean_dict(payload.get("memory"))
+    disk = clean_dict(payload.get("disk"))
+    network = clean_dict(payload.get("network"))
+    return {
+        "id": node_id,
+        "name": clean_text(payload.get("name"), node_id, 128),
+        "group": clean_text(payload.get("group"), "默认", 80),
+        "hostname": hostname,
+        "time": clean_text(payload.get("time"), now_iso(), 64),
+        "agent_uptime": clean_text(payload.get("agent_uptime"), "", 64),
+        "system": {
+            "os": clean_text(system.get("os"), "", 240),
+            "kernel": clean_text(system.get("kernel"), "", 120),
+            "arch": clean_text(system.get("arch"), "", 80),
+            "python": clean_text(system.get("python"), "", 40),
+            "uptime_seconds": clean_int(system.get("uptime_seconds"), 0),
+            "uptime": clean_text(system.get("uptime"), "", 80),
+            "boot_time_utc": clean_text(system.get("boot_time_utc"), "", 80),
+        },
+        "cpu": {
+            "model": clean_text(cpu.get("model"), "", 160),
+            "cores": clean_int(cpu.get("cores"), 1, 1, 4096),
+            "percent": clean_percent(cpu.get("percent")),
+            "load": clean_load(cpu.get("load")),
+        },
+        "memory": {
+            "total": clean_int(memory.get("total")),
+            "available": clean_int(memory.get("available")),
+            "used": clean_int(memory.get("used")),
+            "percent": clean_percent(memory.get("percent")),
+            "swap_total": clean_int(memory.get("swap_total")),
+            "swap_used": clean_int(memory.get("swap_used")),
+            "swap_percent": clean_percent(memory.get("swap_percent")),
+        },
+        "disk": {
+            "path": clean_text(disk.get("path"), "/", 120),
+            "total": clean_int(disk.get("total")),
+            "used": clean_int(disk.get("used")),
+            "free": clean_int(disk.get("free")),
+            "percent": clean_percent(disk.get("percent")),
+        },
+        "network": {
+            "rx_total": clean_int(network.get("rx_total")),
+            "tx_total": clean_int(network.get("tx_total")),
+            "rx_speed": clean_float(network.get("rx_speed")),
+            "tx_speed": clean_float(network.get("tx_speed")),
+        },
+    }
 
 
 def set_data_file(path: str | Path) -> None:
@@ -451,27 +565,33 @@ def render_agent_sections(data: Dict[str, object]) -> Dict[str, object]:
     group_count = len(group_names)
     grouped_cards: Dict[str, list[str]] = {}
     for n in nodes:
-        cpu = n.get("cpu", {})
-        mem = n.get("memory", {})
-        disk = n.get("disk", {})
-        net = n.get("network", {})
-        sysinfo = n.get("system", {})
+        cpu = clean_dict(n.get("cpu"))
+        mem = clean_dict(n.get("memory"))
+        disk = clean_dict(n.get("disk"))
+        net = clean_dict(n.get("network"))
+        sysinfo = clean_dict(n.get("system"))
+        cpu_percent = clean_percent(cpu.get("percent"))
+        load = clean_load(cpu.get("load"))
+        mem_percent = clean_percent(mem.get("percent"))
+        disk_percent = clean_percent(disk.get("percent"))
         online = bool(n.get("online"))
         badge = "ONLINE" if online else "OFFLINE"
         badge_cls = "online" if online else "offline"
         group = str(n.get("group", "默认")) or "默认"
-        node_id = html.escape(str(n.get('id', '')))
+        node_id_raw = str(n.get("id", ""))
+        node_id = html.escape(node_id_raw)
+        node_id_arg = html.escape(json.dumps(node_id_raw), quote=True)
         grouped_cards.setdefault(group, []).append(f"""
         <section class="node" data-node-id="{node_id}">
           <div class="node-head">
             <div><h2>{html.escape(str(n.get('name','node')))}</h2><p>{html.escape(str(n.get('hostname','')))} · {html.escape(str(sysinfo.get('arch','')))} · {html.escape(group)}</p></div>
-            <div class="actions"><span class="badge {badge_cls}">{badge}</span><button class="danger" onclick="deleteNode('{node_id}')">删除</button></div>
+            <div class="actions"><span class="badge {badge_cls}">{badge}</span><button class="danger" onclick="deleteNode({node_id_arg})">删除</button></div>
           </div>
           <div class="metrics">
-            <div><b>CPU</b><strong>{cpu.get('percent',0)}%</strong>{pct_bar(float(cpu.get('percent',0)))}<small>{cpu.get('cores','?')} 核 · Load {cpu.get('load',[0,0,0])[0]}</small></div>
-            <div><b>内存</b><strong>{mem.get('percent',0)}%</strong>{pct_bar(float(mem.get('percent',0)))}<small>{human_bytes(float(mem.get('used',0)))} / {human_bytes(float(mem.get('total',0)))}</small></div>
-            <div><b>磁盘</b><strong>{disk.get('percent',0)}%</strong>{pct_bar(float(disk.get('percent',0)))}<small>{human_bytes(float(disk.get('used',0)))} / {human_bytes(float(disk.get('total',0)))}</small></div>
-            <div><b>网络</b><strong>↓ {human_bytes(float(net.get('rx_speed',0)))}/s</strong><small>↑ {human_bytes(float(net.get('tx_speed',0)))}/s</small><small>总↓ {human_bytes(float(net.get('rx_total',0)))} · 总↑ {human_bytes(float(net.get('tx_total',0)))}</small></div>
+            <div><b>CPU</b><strong>{cpu_percent}%</strong>{pct_bar(cpu_percent)}<small>{clean_int(cpu.get('cores'), 1, 1, 4096)} 核 · Load {load[0]}</small></div>
+            <div><b>内存</b><strong>{mem_percent}%</strong>{pct_bar(mem_percent)}<small>{human_bytes(clean_int(mem.get('used')))} / {human_bytes(clean_int(mem.get('total')))}</small></div>
+            <div><b>磁盘</b><strong>{disk_percent}%</strong>{pct_bar(disk_percent)}<small>{human_bytes(clean_int(disk.get('used')))} / {human_bytes(clean_int(disk.get('total')))}</small></div>
+            <div><b>网络</b><strong>↓ {human_bytes(clean_float(net.get('rx_speed')))}/s</strong><small>↑ {human_bytes(clean_float(net.get('tx_speed')))}/s</small><small>总↓ {human_bytes(clean_int(net.get('rx_total')))} · 总↑ {human_bytes(clean_int(net.get('tx_total')))}</small></div>
           </div>
           <div class="foot">系统运行 {html.escape(str(sysinfo.get('uptime','')))} · 最后上报 {n.get('last_seen_age','?')} 秒前 · {html.escape(str(sysinfo.get('os','')))}</div>
         </section>
@@ -509,7 +629,13 @@ def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw
     token_hint = token_hint or "你的TOKEN"
     install_url = f"{raw_base}/install.sh" if raw_base else "https://raw.githubusercontent.com/你的用户名/你的仓库/main/install.sh"
     master_url = public_url or "http://主控IP:6060"
-    agent_cmd = f"curl -fsSL {install_url} | bash -s -- agent {master_url} {token_hint} 节点名 默认"
+    agent_cmd = "curl -fsSL {} | bash -s -- agent {} {} {} {}".format(
+        shlex.quote(install_url),
+        shlex.quote(master_url),
+        shlex.quote(token_hint),
+        shlex.quote("节点名"),
+        shlex.quote("默认"),
+    )
     body = f"""<!doctype html><html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mini Komari Master</title>
@@ -545,12 +671,18 @@ const installUrl = {json.dumps(install_url)};
 const refreshSeconds = {int(refresh)};
 let editing = false;
 let lastEditAt = 0;
+function shellQuote(value) {{
+  const text = String(value || '');
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(text)) return text;
+  return "'" + text.replace(/'/g, "'\\\\''") + "'";
+}}
 function buildCmd() {{
   const master = document.getElementById('masterUrl').value.trim().replace(/\/$/, '');
   const node = document.getElementById('nodeName').value.trim() || 'node-1';
   const group = document.getElementById('nodeGroup').value.trim() || '默认';
   const token = document.getElementById('token').value.trim() || '你的TOKEN';
-  document.getElementById('agentCmd').textContent = `curl -fsSL ${{installUrl}} | bash -s -- agent ${{master}} ${{token}} ${{node}} ${{group}}`;
+  const args = ['agent', master, token, node, group].map(shellQuote).join(' ');
+  document.getElementById('agentCmd').textContent = `curl -fsSL ${{shellQuote(installUrl)}} | bash -s -- ${{args}}`;
 }}
 function fallbackCopy(text) {{
   const ta = document.createElement('textarea');
@@ -791,8 +923,8 @@ class MasterHandler(BaseHTTPRequestHandler):
             self.send_body(401, b"bad signature\n", "text/plain; charset=utf-8")
             return
         try:
-            payload = json.loads(body.decode("utf-8"))
-            node_id = str(payload.get("id") or payload.get("hostname") or "unknown")
+            payload = sanitize_report_payload(json.loads(body.decode("utf-8")))
+            node_id = str(payload["id"])
             payload["last_seen"] = now_iso()
             payload["last_seen_ts"] = time.time()
             with NODES_LOCK:

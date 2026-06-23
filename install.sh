@@ -4,6 +4,7 @@ set -Eeuo pipefail
 APP_NAME="mini-komari"
 INSTALL_DIR="/opt/$APP_NAME"
 SERVICE_FILE="/etc/systemd/system/$APP_NAME.service"
+ENV_FILE="$INSTALL_DIR/$APP_NAME.env"
 REF="${MINI_KOMARI_REF:-main}"
 REPO="${MINI_KOMARI_REPO:-}"
 RAW_BASE="${MINI_KOMARI_RAW_BASE:-}"
@@ -16,10 +17,36 @@ warn() { echo "! $*"; }
 die() { echo "× $*" >&2; exit 1; }
 random_password() {
     if command -v openssl >/dev/null 2>&1; then
-        openssl rand -base64 18 | tr -d '=+/ ' | cut -c1-16
+        openssl rand -hex 24
     else
-        date +%s%N | sha256sum | cut -c1-16
+        date +%s%N | sha256sum | cut -c1-48
     fi
+}
+quote_env() {
+    local value="$1"
+    value="${value//$'\n'/ }"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    printf '"%s"' "$value"
+}
+quote_systemd_arg() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//%/%%}"
+    printf '"%s"' "$value"
+}
+write_env_file() {
+    local old_umask
+    old_umask="$(umask)"
+    umask 077
+    {
+        for pair in "$@"; do
+            printf '%s\n' "$pair"
+        done
+    } > "$ENV_FILE"
+    umask "$old_umask"
+    chmod 600 "$ENV_FILE"
 }
 usage() {
     cat <<'EOF'
@@ -32,8 +59,8 @@ Mini Komari installer
   bash install.sh update
 
 示例：
-  bash install.sh master 6060 mytoken
-  bash install.sh agent http://1.2.3.4:6060 mytoken hk-node-1 香港
+  bash install.sh master 6060
+  bash install.sh agent http://1.2.3.4:6060 自动生成的TOKEN hk-node-1 香港
 
 环境变量：
   MINI_KOMARI_REPO=用户名/仓库
@@ -107,12 +134,22 @@ write_master_service() {
     local token="${3:-${MINI_KOMARI_TOKEN:-}}"
     local public_url="${4:-${MINI_KOMARI_PUBLIC_URL:-}}"
     resolve_raw_base
+    if [ -z "$token" ]; then
+        token="$(random_password)"
+        info "未指定 TOKEN，已自动生成随机上报密钥"
+    fi
     if [ -z "$public_url" ]; then
         local detected_ip
         detected_ip="$(detect_public_ip)"
         [ -n "$detected_ip" ] || detected_ip="你的主控IP"
         public_url="http://$detected_ip:$port"
     fi
+    write_env_file \
+        "MINI_KOMARI_TOKEN=$(quote_env "$token")" \
+        "MINI_KOMARI_PUBLIC_URL=$(quote_env "$public_url")" \
+        "MINI_KOMARI_RAW_BASE=$(quote_env "$RAW_BASE")" \
+        "MINI_KOMARI_DATA_FILE=$(quote_env "$INSTALL_DIR/nodes.json")" \
+        "MINI_KOMARI_USER_FILE=$(quote_env "$INSTALL_DIR/user.json")"
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Mini Komari Master
@@ -121,12 +158,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Environment=MINI_KOMARI_TOKEN=$token
-Environment=MINI_KOMARI_PUBLIC_URL=$public_url
-Environment=MINI_KOMARI_RAW_BASE=$RAW_BASE
-Environment=MINI_KOMARI_DATA_FILE=$INSTALL_DIR/nodes.json
-Environment=MINI_KOMARI_USER_FILE=$INSTALL_DIR/user.json
-ExecStart=/usr/bin/env python3 $INSTALL_DIR/mini_komari.py master --host 0.0.0.0 --port $port --token $token --public-url $public_url --raw-base $RAW_BASE --data-file $INSTALL_DIR/nodes.json --user-file $INSTALL_DIR/user.json --quiet
+EnvironmentFile=$ENV_FILE
+ExecStart=/usr/bin/env python3 $INSTALL_DIR/mini_komari.py master --host 0.0.0.0 --port $port --quiet
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
@@ -140,6 +173,8 @@ EOF
     echo "$port" > "$INSTALL_DIR/PORT"
     echo "master" > "$INSTALL_DIR/MODE"
     echo "$public_url" > "$INSTALL_DIR/PUBLIC_URL"
+    echo "$token" > "$INSTALL_DIR/TOKEN"
+    chmod 600 "$INSTALL_DIR/TOKEN"
 }
 
 write_agent_service() {
@@ -148,6 +183,11 @@ write_agent_service() {
     local node_name="${4:-${MINI_KOMARI_NODE_NAME:-$(hostname)}}"
     local node_group="${5:-${MINI_KOMARI_NODE_GROUP:-默认}}"
     [ -n "$master_url" ] || die "agent 模式需要主控 URL，例如：http://1.2.3.4:6060"
+    [ -n "$token" ] || die "agent 模式需要 TOKEN，请从主控网页复制完整安装命令"
+    write_env_file \
+        "MINI_KOMARI_TOKEN=$(quote_env "$token")" \
+        "MINI_KOMARI_NODE_NAME=$(quote_env "$node_name")" \
+        "MINI_KOMARI_NODE_GROUP=$(quote_env "$node_group")"
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Mini Komari Agent
@@ -156,10 +196,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Environment="MINI_KOMARI_TOKEN=$token"
-Environment="MINI_KOMARI_NODE_NAME=$node_name"
-Environment="MINI_KOMARI_NODE_GROUP=$node_group"
-ExecStart=/usr/bin/env python3 $INSTALL_DIR/mini_komari.py agent --master $master_url --interval ${MINI_KOMARI_INTERVAL:-5} --quiet
+EnvironmentFile=$ENV_FILE
+ExecStart=/usr/bin/env python3 $INSTALL_DIR/mini_komari.py agent --master $(quote_systemd_arg "$master_url") --interval ${MINI_KOMARI_INTERVAL:-5} --quiet
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
@@ -175,6 +213,7 @@ EOF
     echo "$token" > "$INSTALL_DIR/TOKEN"
     echo "$node_name" > "$INSTALL_DIR/NODE_NAME"
     echo "$node_group" > "$INSTALL_DIR/NODE_GROUP"
+    chmod 600 "$INSTALL_DIR/TOKEN"
 }
 
 write_standalone_service() {

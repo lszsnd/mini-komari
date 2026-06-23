@@ -22,8 +22,9 @@
 - 输入 Agent 命令参数时自动暂停刷新，避免打字被刷新打断
 - 复制安装命令支持 Clipboard API 和兼容 fallback
 - Agent 被控端：定时采集 CPU、内存、磁盘、网络并上报
-- HMAC Token 签名校验，防止乱上报
+- HMAC Token 签名校验，防止乱上报；未指定时自动生成随机 Token
 - Agent 命令生成器默认隐藏 Token，可手动显示/隐藏
+- Agent 上报数据会做字段校验和长度限制，避免异常数据污染面板
 - systemd 常驻运行
 - 主控网页登录保护：首次访问网页注册管理员账号，之后登录使用
 - 节点数据持久化到 `/opt/mini-komari/nodes.json`，主控重启后自动恢复
@@ -58,17 +59,18 @@ https://github.com/lszsnd/mini-komari
 在主控服务器执行：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lszsnd/mini-komari/main/install.sh | bash -s -- master 6060 mytoken
+curl -fsSL https://raw.githubusercontent.com/lszsnd/mini-komari/main/install.sh | bash -s -- master 6060
 ```
 
 参数：
 
 ```text
-master 6060 mytoken
-│      │    └───────────────────────────────── 上报密钥，自己改复杂一点
+master 6060
 │      └────────────────────────────────────── 主控面板端口
 └───────────────────────────────────────────── 安装模式
 ```
+
+不传 Token 时，安装脚本会自动生成随机上报密钥，并保存在 `/opt/mini-komari/TOKEN` 和 `/opt/mini-komari/mini-komari.env`。
 
 安装脚本会自动识别主控公网 IP，并生成类似下面的面板地址：
 
@@ -79,7 +81,13 @@ http://主控公网IP:6060/
 如果自动识别不准，也可以手动指定主控公网 URL：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lszsnd/mini-komari/main/install.sh | bash -s -- master 6060 mytoken http://你的域名或IP:6060
+curl -fsSL https://raw.githubusercontent.com/lszsnd/mini-komari/main/install.sh | bash -s -- master 6060 "" http://你的域名或IP:6060
+```
+
+也可以手动指定 Token：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lszsnd/mini-komari/main/install.sh | bash -s -- master 6060 强随机TOKEN http://你的域名或IP:6060
 ```
 
 然后打开安装输出里的面板地址。首次访问会进入注册页面，创建管理员账号后即可登录。
@@ -108,7 +116,7 @@ journalctl -u mini-komari -f
 
 - 主控地址：一般自动填好，例如 `http://主控IP:6060`
 - 节点名：例如 `hk-node-1`
-- Token：必须和主控安装时的 token 一致
+- Token：页面会自动填入主控当前 Token，一般不用手动改
 
 点击复制安装命令。
 
@@ -119,7 +127,7 @@ journalctl -u mini-komari -f
 类似：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lszsnd/mini-komari/main/install.sh | bash -s -- agent http://主控IP:6060 mytoken hk-node-1 香港
+curl -fsSL https://raw.githubusercontent.com/lszsnd/mini-komari/main/install.sh | bash -s -- agent http://主控IP:6060 自动生成的TOKEN hk-node-1 香港
 ```
 
 几秒后，主控网页就会出现该节点。
@@ -130,7 +138,7 @@ curl -fsSL https://raw.githubusercontent.com/lszsnd/mini-komari/main/install.sh 
 
 ```bash
 MINI_KOMARI_REPO=你的用户名/你的仓库 \
-curl -fsSL https://raw.githubusercontent.com/你的用户名/你的仓库/main/install.sh | bash -s -- master 6060 mytoken
+curl -fsSL https://raw.githubusercontent.com/你的用户名/你的仓库/main/install.sh | bash -s -- master 6060
 ```
 
 Agent 安装命令也可以在主控网页里生成。
@@ -141,7 +149,7 @@ Agent 安装命令也可以在主控网页里生成。
 mkdir -p /tmp/mini-komari && cd /tmp/mini-komari
 curl -fsSLO https://raw.githubusercontent.com/你的用户名/你的仓库/main/install.sh
 curl -fsSLO https://raw.githubusercontent.com/你的用户名/你的仓库/main/mini_komari.py
-bash install.sh master 6060 mytoken
+bash install.sh master 6060
 ```
 
 ## API
@@ -204,7 +212,7 @@ bash uninstall.sh
 python3 mini_komari.py master \
   --host 127.0.0.1 \
   --port 6060 \
-  --token mytoken \
+  --token 测试TOKEN \
   --public-url http://127.0.0.1:6060 \
   --raw-base https://raw.githubusercontent.com/lszsnd/mini-komari/main
 ```
@@ -214,7 +222,7 @@ Agent 上报一次：
 ```bash
 python3 mini_komari.py agent \
   --master http://127.0.0.1:6060 \
-  --token mytoken \
+  --token 测试TOKEN \
   --name local-test \
   --once
 ```
@@ -227,7 +235,7 @@ python3 mini_komari.py agent \
 | `MINI_KOMARI_REF` | `main` | 分支或 tag |
 | `MINI_KOMARI_RAW_BASE` | 自动拼接 | 自定义 raw base URL |
 | `MINI_KOMARI_PUBLIC_URL` | 自动识别公网 IP | 主控公网访问地址 |
-| `MINI_KOMARI_TOKEN` | 空 | 上报签名 token |
+| `MINI_KOMARI_TOKEN` | 自动生成 | 上报签名 token |
 | `MINI_KOMARI_PORT` | `6060` | Master/Standalone 端口 |
 | `MINI_KOMARI_INTERVAL` | `5` | Agent 上报间隔秒数 |
 | `MINI_KOMARI_NODE_NAME` | hostname | Agent 节点名 |
