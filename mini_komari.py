@@ -629,7 +629,7 @@ def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw
     token_hint = token_hint or "你的TOKEN"
     install_url = f"{raw_base}/install.sh" if raw_base else "https://raw.githubusercontent.com/你的用户名/你的仓库/main/install.sh"
     master_url = public_url or "http://主控IP:6060"
-    agent_cmd = "curl -fsSL {} | bash -s -- agent {} {} {} {}".format(
+    agent_cmd = "curl -fsSL {} | MINI_KOMARI_INTERVAL=3 bash -s -- agent {} {} {} {}".format(
         shlex.quote(install_url),
         shlex.quote(master_url),
         shlex.quote(token_hint),
@@ -682,7 +682,7 @@ function buildCmd() {{
   const group = document.getElementById('nodeGroup').value.trim() || '默认';
   const token = document.getElementById('token').value.trim() || '你的TOKEN';
   const args = ['agent', master, token, node, group].map(shellQuote).join(' ');
-  document.getElementById('agentCmd').textContent = `curl -fsSL ${{shellQuote(installUrl)}} | bash -s -- ${{args}}`;
+  document.getElementById('agentCmd').textContent = `curl -fsSL ${{shellQuote(installUrl)}} | MINI_KOMARI_INTERVAL=3 bash -s -- ${{args}}`;
 }}
 function fallbackCopy(text) {{
   const ta = document.createElement('textarea');
