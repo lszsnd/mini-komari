@@ -855,14 +855,18 @@ def run_agent(args: argparse.Namespace) -> None:
     token = args.token or os.environ.get("MINI_KOMARI_TOKEN", "")
     print(f"Mini Komari agent reporting to {report_url}", flush=True)
     while True:
+        ok = False
         try:
             payload = collect_status(args.node_id, args.name, args.group)
             code, text = post_json(report_url, payload, token)
+            ok = 200 <= code < 300
             if not args.quiet:
                 print(f"reported {payload['id']} -> HTTP {code} {text.strip()}", flush=True)
         except Exception as exc:
             print(f"report failed: {exc}", file=sys.stderr, flush=True)
         if args.once:
+            if not ok:
+                raise SystemExit(1)
             break
         time.sleep(max(1, args.interval))
 

@@ -156,10 +156,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Environment=MINI_KOMARI_TOKEN=$token
-Environment=MINI_KOMARI_NODE_NAME=$node_name
-Environment=MINI_KOMARI_NODE_GROUP=$node_group
-ExecStart=/usr/bin/env python3 $INSTALL_DIR/mini_komari.py agent --master $master_url --name $node_name --group $node_group --interval ${MINI_KOMARI_INTERVAL:-5} --quiet
+Environment="MINI_KOMARI_TOKEN=$token"
+Environment="MINI_KOMARI_NODE_NAME=$node_name"
+Environment="MINI_KOMARI_NODE_GROUP=$node_group"
+ExecStart=/usr/bin/env python3 $INSTALL_DIR/mini_komari.py agent --master $master_url --interval ${MINI_KOMARI_INTERVAL:-5} --quiet
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
@@ -172,6 +172,9 @@ WantedBy=multi-user.target
 EOF
     echo "agent" > "$INSTALL_DIR/MODE"
     echo "$master_url" > "$INSTALL_DIR/MASTER_URL"
+    echo "$token" > "$INSTALL_DIR/TOKEN"
+    echo "$node_name" > "$INSTALL_DIR/NODE_NAME"
+    echo "$node_group" > "$INSTALL_DIR/NODE_GROUP"
 }
 
 write_standalone_service() {
@@ -207,6 +210,16 @@ update_app() {
     info "更新完成，已重启 $APP_NAME"
 }
 
+agent_once_check() {
+    local master_url="$(cat "$INSTALL_DIR/MASTER_URL" 2>/dev/null || true)"
+    local token="$(cat "$INSTALL_DIR/TOKEN" 2>/dev/null || true)"
+    local node_name="$(cat "$INSTALL_DIR/NODE_NAME" 2>/dev/null || hostname)"
+    local node_group="$(cat "$INSTALL_DIR/NODE_GROUP" 2>/dev/null || printf '默认')"
+    [ -n "$master_url" ] || return 1
+    MINI_KOMARI_TOKEN="$token" MINI_KOMARI_NODE_NAME="$node_name" MINI_KOMARI_NODE_GROUP="$node_group" \
+        /usr/bin/env python3 "$INSTALL_DIR/mini_komari.py" agent --master "$master_url" --once --interval 1
+}
+
 post_install_check() {
     local mode="$1"
     local port="${2:-${MINI_KOMARI_PORT:-6060}}"
@@ -225,11 +238,17 @@ post_install_check() {
             return 1
             ;;
         agent)
-            if systemctl is-active --quiet "$APP_NAME"; then
-                info "Agent 服务已启动"
+            if ! systemctl is-active --quiet "$APP_NAME"; then
+                warn "Agent 服务未处于 active 状态"
+                warn "请查看日志：journalctl -u $APP_NAME -f"
+                return 1
+            fi
+            info "Agent 服务已启动"
+            if agent_once_check; then
+                info "Agent 上报验证通过"
                 return 0
             fi
-            warn "Agent 服务未处于 active 状态"
+            warn "Agent 上报验证失败：主控地址、TOKEN 或网络可能有问题"
             warn "请查看日志：journalctl -u $APP_NAME -f"
             return 1
             ;;
