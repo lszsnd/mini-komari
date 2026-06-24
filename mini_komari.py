@@ -525,7 +525,7 @@ def render_auth_page(mode: str, error: str = "") -> bytes:
 <h1>{title}</h1><p>{hint}</p>{error_html}
 <label>用户名</label><input name="username" autocomplete="username" required autofocus>
 <label>密码</label><input name="password" type="password" autocomplete="{'new-password' if is_register else 'current-password'}" required>
-<label class="remember"><input name="remember" type="checkbox" value="1" {'checked' if not is_register else ''}>记住登录 30 天，之后自动登录</label>
+<label class="remember"><input name="remember" type="checkbox" value="1" {'checked' if not is_register else ''}>记住密码/自动登录 30 天</label>
 <button type="submit">{button}</button>
 </form></body></html>"""
     return body.encode("utf-8")
