@@ -53,6 +53,7 @@ SESSIONS_LOCK = threading.Lock()
 DATA_FILE = Path(os.environ.get("MINI_KOMARI_DATA_FILE", "/opt/mini-komari/nodes.json"))
 USER_FILE = Path(os.environ.get("MINI_KOMARI_USER_FILE", "/opt/mini-komari/user.json"))
 SESSION_TTL = 86400 * 7
+REMEMBER_SESSION_TTL = 86400 * 30
 SAFE_NODE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,128}$")
 PROBE_ICON_SVG_B64 = "PHN2ZyB3aWR0aD0iMTAyNCIgaGVpZ2h0PSIxMDI0IiB2aWV3Qm94PSIwIDAgMTAyNCAxMDI0IiBmaWxsPSJub25lIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgogIDx0aXRsZT5NaW5pIEtvbWFyaSBQcm9iZSBJY29uPC90aXRsZT4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iYmciIHgxPSIxODAiIHkxPSIxMjgiIHgyPSI4NDQiIHkyPSI4OTYiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj4KICAgICAgPHN0b3Agc3RvcC1jb2xvcj0iI0Y4RkJGRiIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNFRUY3RjUiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9InByb2JlIiB4MT0iMzQ0IiB5MT0iNzA0IiB4Mj0iNzA2IiB5Mj0iMzMwIiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+CiAgICAgIDxzdG9wIHN0b3AtY29sb3I9IiM0RDZCRkYiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMTZDOEEwIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJjb3JlIiB4MT0iMzkyIiB5MT0iNjMyIiB4Mj0iNjM4IiB5Mj0iMzg0IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+CiAgICAgIDxzdG9wIHN0b3AtY29sb3I9IiMyNzMwNEYiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMTUxQTJEIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGZpbHRlciBpZD0ic29mdFNoYWRvdyIgeD0iODQiIHk9IjgyIiB3aWR0aD0iODU2IiBoZWlnaHQ9Ijg3MiIgZmlsdGVyVW5pdHM9InVzZXJTcGFjZU9uVXNlIiBjb2xvci1pbnRlcnBvbGF0aW9uLWZpbHRlcnM9InNSR0IiPgogICAgICA8ZmVGbG9vZCBmbG9vZC1vcGFjaXR5PSIwIiByZXN1bHQ9IkJhY2tncm91bmRJbWFnZUZpeCIvPgogICAgICA8ZmVDb2xvck1hdHJpeCBpbj0iU291cmNlQWxwaGEiIHR5cGU9Im1hdHJpeCIgdmFsdWVzPSIwIDAgMCAwIDAgMCAwIDAgMCAwIDAgMCAwIDAgMCAwIDAgMCAxMjcgMCIgcmVzdWx0PSJoYXJkQWxwaGEiLz4KICAgICAgPGZlT2Zmc2V0IGR5PSIxNiIvPgogICAgICA8ZmVHYXVzc2lhbkJsdXIgc3RkRGV2aWF0aW9uPSIyOCIvPgogICAgICA8ZmVDb2xvck1hdHJpeCB0eXBlPSJtYXRyaXgiIHZhbHVlcz0iMCAwIDAgMCAwLjEyIDAgMCAwIDAgMC4xOSAwIDAgMCAwIDAuMzAgMCAwIDAgMC4xNiAwIi8+CiAgICAgIDxmZUJsZW5kIG1vZGU9Im5vcm1hbCIgaW4yPSJCYWNrZ3JvdW5kSW1hZ2VGaXgiIHJlc3VsdD0iZWZmZWN0MV9kcm9wU2hhZG93XzFfMSIvPgogICAgICA8ZmVCbGVuZCBtb2RlPSJub3JtYWwiIGluPSJTb3VyY2VHcmFwaGljIiBpbjI9ImVmZmVjdDFfZHJvcFNoYWRvd18xXzEiIHJlc3VsdD0ic2hhcGUiLz4KICAgIDwvZmlsdGVyPgogICAgPGNsaXBQYXRoIGlkPSJjbGlwIj4KICAgICAgPHJlY3QgeD0iMTI4IiB5PSIxMjgiIHdpZHRoPSI3NjgiIGhlaWdodD0iNzY4IiByeD0iMTg4Ii8+CiAgICA8L2NsaXBQYXRoPgogIDwvZGVmcz4KCiAgPGcgZmlsdGVyPSJ1cmwoI3NvZnRTaGFkb3cpIj4KICAgIDxyZWN0IHg9IjEyOCIgeT0iMTI4IiB3aWR0aD0iNzY4IiBoZWlnaHQ9Ijc2OCIgcng9IjE4OCIgZmlsbD0idXJsKCNiZykiLz4KICAgIDxyZWN0IHg9IjE0OCIgeT0iMTQ4IiB3aWR0aD0iNzI4IiBoZWlnaHQ9IjcyOCIgcng9IjE2OCIgc3Ryb2tlPSIjRkZGRkZGIiBzdHJva2Utd2lkdGg9IjQwIiBzdHJva2Utb3BhY2l0eT0iMC44NiIvPgogIDwvZz4KCiAgPGcgY2xpcC1wYXRoPSJ1cmwoI2NsaXApIj4KICAgIDxwYXRoIGQ9Ik0yMTQgMzUySDMxOEMzNDcuODIzIDM1MiAzNzYuNDI1IDM2My44NSAzOTcuNTE1IDM4NC45MjlMNDM5LjA3MSA0MjYuNDY0QzQ2MC4xNjggNDQ3LjU1MSA0ODguNzgxIDQ1OS40IDUxOC42MTUgNDU5LjRIODEwIiBzdHJva2U9IiNDOUQ4RTgiIHN0cm9rZS13aWR0aD0iMjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogICAgPHBhdGggZD0iTTIxNCA2NzJIMzM2QzM2NS44MjMgNjcyIDM5NC40MjUgNjYwLjE1IDQxNS41MTUgNjM5LjA3MUw0NjAuNDg1IDU5NC4xMjlDNDgxLjU3NSA1NzMuMDUgNTEwLjE3NyA1NjEuMiA1NDAgNTYxLjJIODEwIiBzdHJva2U9IiNDOUQ4RTgiIHN0cm9rZS13aWR0aD0iMjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogICAgPHBhdGggZD0iTTIyOCA1MTJINzkyIiBzdHJva2U9IiNEREU4RjIiIHN0cm9rZS13aWR0aD0iMTgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWRhc2hhcnJheT0iMiA1NCIvPgogIDwvZz4KCiAgPGNpcmNsZSBjeD0iMzAyIiBjeT0iMzUyIiByPSI0NCIgZmlsbD0iI0ZGRkZGRiIvPgogIDxjaXJjbGUgY3g9IjMwMiIgY3k9IjM1MiIgcj0iMjIiIGZpbGw9IiMxNkM4QTAiLz4KICA8Y2lyY2xlIGN4PSI3NTAiIGN5PSI0NTkiIHI9IjM0IiBmaWxsPSIjRkZGRkZGIi8+CiAgPGNpcmNsZSBjeD0iNzUwIiBjeT0iNDU5IiByPSIxNiIgZmlsbD0iIzRENkJGRiIvPgogIDxjaXJjbGUgY3g9IjMzMiIgY3k9IjY3MiIgcj0iMzYiIGZpbGw9IiNGRkZGRkYiLz4KICA8Y2lyY2xlIGN4PSIzMzIiIGN5PSI2NzIiIHI9IjE1IiBmaWxsPSIjN0E4QUEwIi8+CgogIDxwYXRoIGQ9Ik02NzUuMDE0IDI5OS41MzZDNjk1LjUzOCAyNzkuMDEyIDcyOC44MTIgMjc5LjAxMiA3NDkuMzM2IDI5OS41MzZMNzUyLjQ2NCAzMDIuNjY0Qzc3Mi45ODggMzIzLjE4OCA3NzIuOTg4IDM1Ni40NjIgNzUyLjQ2NCAzNzYuOTg2TDQ5Ny4xNzYgNjMyLjI3NEM0ODkuNzI2IDYzOS43MjQgNDgwLjIwMSA2NDQuNzY1IDQ2OS44NDcgNjQ2LjczN0wzNzQuNzU2IDY2NC44NUMzNTIuMDE1IDY2OS4xODIgMzMyLjgxOCA2NDkuOTg1IDMzNy4xNSA2MjcuMjQ0TDM1NS4yNjMgNTMyLjE1M0MzNTcuMjM1IDUyMS43OTkgMzYyLjI3NiA1MTIuMjc0IDM2OS43MjYgNTA0LjgyNEw2NzUuMDE0IDI5OS41MzZaIiBmaWxsPSJ1cmwoI3Byb2JlKSIvPgogIDxwYXRoIGQ9Ik02NTIuNTI0IDMyNi44NTFMNzI0LjE0OSAzOTguNDc2TDQ4OC45NzkgNjMzLjY0NkM0ODMuNDA4IDYzOS4yMTcgNDc2LjE5OSA2NDIuODU5IDQ2OC40MDkgNjQ0LjAzOUwzODYuMjgxIDY1Ni40NzZDMzc1LjMgNjU4LjEzOSAzNjUuODYxIDY0OC43IDM2Ny41MjQgNjM3LjcxOUwzNzkuOTYxIDU1NS41OTFDMzgxLjE0MSA1NDcuODAxIDM4NC43ODMgNTQwLjU5MiAzOTAuMzU0IDUzNS4wMjFMNjUyLjUyNCAzMjYuODUxWiIgZmlsbD0idXJsKCNjb3JlKSIgZmlsbC1vcGFjaXR5PSIwLjk2Ii8+CiAgPHBhdGggZD0iTTYzNSAzNjVMNjg4LjUgNDE4LjUiIHN0cm9rZT0iI0ZGRkZGRiIgc3Ryb2tlLXdpZHRoPSIyMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2Utb3BhY2l0eT0iMC45MiIvPgogIDxwYXRoIGQ9Ik00MDUgNTg2TDQ2MS41IDY0Mi41IiBzdHJva2U9IiMxNkM4QTAiIHN0cm9rZS13aWR0aD0iMTYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0zNTUgNjQ2TDM4MSA2MjBMNDA0IDY0M0wzNjUgNjUyQzM1OC41IDY1My41IDM1My4yIDY1MC44IDM1NSA2NDZaIiBmaWxsPSIjMTZDOEEwIi8+CgogIDxjaXJjbGUgY3g9IjUxMiIgY3k9IjUxMiIgcj0iMTI2IiBzdHJva2U9IiNGRkZGRkYiIHN0cm9rZS13aWR0aD0iMTgiIHN0cm9rZS1vcGFjaXR5PSIwLjYyIi8+CiAgPGNpcmNsZSBjeD0iNTEyIiBjeT0iNTEyIiByPSI5MCIgc3Ryb2tlPSIjRERFOEYyIiBzdHJva2Utd2lkdGg9IjE0IiBzdHJva2Utb3BhY2l0eT0iMC44OCIvPgogIDxjaXJjbGUgY3g9IjUxMiIgY3k9IjUxMiIgcj0iMzIiIGZpbGw9IiNGRkZGRkYiLz4KICA8Y2lyY2xlIGN4PSI1MTIiIGN5PSI1MTIiIHI9IjE0IiBmaWxsPSIjMTZDOEEwIi8+Cjwvc3ZnPgo="
 PROBE_MARK_SVG_B64 = "PHN2ZyB3aWR0aD0iMTAyNCIgaGVpZ2h0PSIxMDI0IiB2aWV3Qm94PSIwIDAgMTAyNCAxMDI0IiBmaWxsPSJub25lIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgogIDx0aXRsZT5NaW5pIEtvbWFyaSBQcm9iZSBNYXJrPC90aXRsZT4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0icHJvYmUiIHgxPSIzNDQiIHkxPSI3MDQiIHgyPSI3MDYiIHkyPSIzMzAiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj4KICAgICAgPHN0b3Agc3RvcC1jb2xvcj0iIzRENkJGRiIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxNkM4QTAiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImNvcmUiIHgxPSIzOTIiIHkxPSI2MzIiIHgyPSI2MzgiIHkyPSIzODQiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj4KICAgICAgPHN0b3Agc3RvcC1jb2xvcj0iIzI3MzA0RiIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxNTFBMkQiLz4KICAgIDwvbGluZWFyR3JhZGllbnQ+CiAgICA8ZmlsdGVyIGlkPSJzb2Z0U2hhZG93IiB4PSIyNDEiIHk9IjIyNyIgd2lkdGg9IjU2NyIgaGVpZ2h0PSI1MTQiIGZpbHRlclVuaXRzPSJ1c2VyU3BhY2VPblVzZSIgY29sb3ItaW50ZXJwb2xhdGlvbi1maWx0ZXJzPSJzUkdCIj4KICAgICAgPGZlRmxvb2QgZmxvb2Qtb3BhY2l0eT0iMCIgcmVzdWx0PSJCYWNrZ3JvdW5kSW1hZ2VGaXgiLz4KICAgICAgPGZlQ29sb3JNYXRyaXggaW49IlNvdXJjZUFscGhhIiB0eXBlPSJtYXRyaXgiIHZhbHVlcz0iMCAwIDAgMCAwIDAgMCAwIDAgMCAwIDAgMCAwIDAgMCAwIDAgMTI3IDAiIHJlc3VsdD0iaGFyZEFscGhhIi8+CiAgICAgIDxmZU9mZnNldCBkeT0iMTIiLz4KICAgICAgPGZlR2F1c3NpYW5CbHVyIHN0ZERldmlhdGlvbj0iMjAiLz4KICAgICAgPGZlQ29sb3JNYXRyaXggdHlwZT0ibWF0cml4IiB2YWx1ZXM9IjAgMCAwIDAgMC4xMiAwIDAgMCAwIDAuMTkgMCAwIDAgMCAwLjMwIDAgMCAwIDAuMTggMCIvPgogICAgICA8ZmVCbGVuZCBtb2RlPSJub3JtYWwiIGluMj0iQmFja2dyb3VuZEltYWdlRml4IiByZXN1bHQ9ImVmZmVjdDFfZHJvcFNoYWRvd18xXzEiLz4KICAgICAgPGZlQmxlbmQgbW9kZT0ibm9ybWFsIiBpbj0iU291cmNlR3JhcGhpYyIgaW4yPSJlZmZlY3QxX2Ryb3BTaGFkb3dfMV8xIiByZXN1bHQ9InNoYXBlIi8+CiAgICA8L2ZpbHRlcj4KICA8L2RlZnM+CgogIDxwYXRoIGQ9Ik0yMTQgMzUySDMxOEMzNDcuODIzIDM1MiAzNzYuNDI1IDM2My44NSAzOTcuNTE1IDM4NC45MjlMNDM5LjA3MSA0MjYuNDY0QzQ2MC4xNjggNDQ3LjU1MSA0ODguNzgxIDQ1OS40IDUxOC42MTUgNDU5LjRIODEwIiBzdHJva2U9IiNDOUQ4RTgiIHN0cm9rZS13aWR0aD0iMjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0yMTQgNjcySDMzNkMzNjUuODIzIDY3MiAzOTQuNDI1IDY2MC4xNSA0MTUuNTE1IDYzOS4wNzFMNDYwLjQ4NSA1OTQuMTI5QzQ4MS41NzUgNTczLjA1IDUxMC4xNzcgNTYxLjIgNTQwIDU2MS4ySDgxMCIgc3Ryb2tlPSIjQzlEOEU4IiBzdHJva2Utd2lkdGg9IjI0IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8cGF0aCBkPSJNMjI4IDUxMkg3OTIiIHN0cm9rZT0iI0RERThGMiIgc3Ryb2tlLXdpZHRoPSIxOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtZGFzaGFycmF5PSIyIDU0Ii8+CgogIDxjaXJjbGUgY3g9IjMwMiIgY3k9IjM1MiIgcj0iNDQiIGZpbGw9IiNGRkZGRkYiLz4KICA8Y2lyY2xlIGN4PSIzMDIiIGN5PSIzNTIiIHI9IjIyIiBmaWxsPSIjMTZDOEEwIi8+CiAgPGNpcmNsZSBjeD0iNzUwIiBjeT0iNDU5IiByPSIzNCIgZmlsbD0iI0ZGRkZGRiIvPgogIDxjaXJjbGUgY3g9Ijc1MCIgY3k9IjQ1OSIgcj0iMTYiIGZpbGw9IiM0RDZCRkYiLz4KICA8Y2lyY2xlIGN4PSIzMzIiIGN5PSI2NzIiIHI9IjM2IiBmaWxsPSIjRkZGRkZGIi8+CiAgPGNpcmNsZSBjeD0iMzMyIiBjeT0iNjcyIiByPSIxNSIgZmlsbD0iIzdBOEFBMCIvPgoKICA8ZyBmaWx0ZXI9InVybCgjc29mdFNoYWRvdykiPgogICAgPHBhdGggZD0iTTY3NS4wMTQgMjk5LjUzNkM2OTUuNTM4IDI3OS4wMTIgNzI4LjgxMiAyNzkuMDEyIDc0OS4zMzYgMjk5LjUzNkw3NTIuNDY0IDMwMi42NjRDNzcyLjk4OCAzMjMuMTg4IDc3Mi45ODggMzU2LjQ2MiA3NTIuNDY0IDM3Ni45ODZMNDk3LjE3NiA2MzIuMjc0QzQ4OS43MjYgNjM5LjcyNCA0ODAuMjAxIDY0NC43NjUgNDY5Ljg0NyA2NDYuNzM3TDM3NC43NTYgNjY0Ljg1QzM1Mi4wMTUgNjY5LjE4MiAzMzIuODE4IDY0OS45ODUgMzM3LjE1IDYyNy4yNDRMMzU1LjI2MyA1MzIuMTUzQzM1Ny4yMzUgNTIxLjc5OSAzNjIuMjc2IDUxMi4yNzQgMzY5LjcyNiA1MDQuODI0TDY3NS4wMTQgMjk5LjUzNloiIGZpbGw9InVybCgjcHJvYmUpIi8+CiAgICA8cGF0aCBkPSJNNjUyLjUyNCAzMjYuODUxTDcyNC4xNDkgMzk4LjQ3Nkw0ODguOTc5IDYzMy42NDZDNDgzLjQwOCA2MzkuMjE3IDQ3Ni4xOTkgNjQyLjg1OSA0NjguNDA5IDY0NC4wMzlMMzg2LjI4MSA2NTYuNDc2QzM3NS4zIDY1OC4xMzkgMzY1Ljg2MSA2NDguNyAzNjcuNTI0IDYzNy43MTlMMzc5Ljk2MSA1NTUuNTkxQzM4MS4xNDEgNTQ3LjgwMSAzODQuNzgzIDU0MC41OTIgMzkwLjM1NCA1MzUuMDIxTDY1Mi41MjQgMzI2Ljg1MVoiIGZpbGw9InVybCgjY29yZSkiIGZpbGwtb3BhY2l0eT0iMC45NiIvPgogICAgPHBhdGggZD0iTTYzNSAzNjVMNjg4LjUgNDE4LjUiIHN0cm9rZT0iI0ZGRkZGRiIgc3Ryb2tlLXdpZHRoPSIyMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2Utb3BhY2l0eT0iMC45MiIvPgogICAgPHBhdGggZD0iTTQwNSA1ODZMNDYxLjUgNjQyLjUiIHN0cm9rZT0iIzE2QzhBMCIgc3Ryb2tlLXdpZHRoPSIxNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgICA8cGF0aCBkPSJNMzU1IDY0NkwzODEgNjIwTDQwNCA2NDNMMzY1IDY1MkMzNTguNSA2NTMuNSAzNTMuMiA2NTAuOCAzNTUgNjQ2WiIgZmlsbD0iIzE2QzhBMCIvPgogIDwvZz4KCiAgPGNpcmNsZSBjeD0iNTEyIiBjeT0iNTEyIiByPSIxMjYiIHN0cm9rZT0iI0ZGRkZGRiIgc3Ryb2tlLXdpZHRoPSIxOCIgc3Ryb2tlLW9wYWNpdHk9IjAuODIiLz4KICA8Y2lyY2xlIGN4PSI1MTIiIGN5PSI1MTIiIHI9IjkwIiBzdHJva2U9IiNEREU4RjIiIHN0cm9rZS13aWR0aD0iMTQiIHN0cm9rZS1vcGFjaXR5PSIwLjkiLz4KICA8Y2lyY2xlIGN4PSI1MTIiIGN5PSI1MTIiIHI9IjMyIiBmaWxsPSIjRkZGRkZGIi8+CiAgPGNpcmNsZSBjeD0iNTEyIiBjeT0iNTEyIiByPSIxNCIgZmlsbD0iIzE2QzhBMCIvPgo8L3N2Zz4K"
@@ -440,10 +441,10 @@ def ensure_legacy_user(username: str = "", password: str = "") -> None:
         print(f"Failed to create legacy dashboard user: {exc}", file=sys.stderr, flush=True)
 
 
-def create_session() -> str:
+def create_session(ttl: int = SESSION_TTL) -> str:
     sid = secrets.token_urlsafe(32)
     with SESSIONS_LOCK:
-        SESSIONS[sid] = time.time() + SESSION_TTL
+        SESSIONS[sid] = time.time() + max(60, int(ttl))
     return sid
 
 
@@ -456,8 +457,39 @@ def valid_session(sid: str) -> bool:
         if exp <= now:
             SESSIONS.pop(sid, None)
             return False
-        SESSIONS[sid] = now + SESSION_TTL
         return True
+
+
+def session_cookie(sid: str, ttl: int) -> str:
+    ttl = max(60, int(ttl))
+    return f"mini_komari_session={sid}; Path=/; Max-Age={ttl}; HttpOnly; SameSite=Lax"
+
+
+def remember_cookie(username: str, ttl: int = REMEMBER_SESSION_TTL) -> str:
+    user = load_user() or {}
+    issued = str(int(time.time()))
+    exp = str(int(time.time() + max(60, int(ttl))))
+    secret = str(user.get("password_hash", ""))
+    payload = f"{username}:{issued}:{exp}"
+    sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    token = base64.urlsafe_b64encode(f"{payload}:{sig}".encode()).decode().rstrip("=")
+    return f"mini_komari_remember={token}; Path=/; Max-Age={max(60, int(ttl))}; HttpOnly; SameSite=Lax"
+
+
+def valid_remember_token(token: str) -> str:
+    if not token:
+        return ""
+    try:
+        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)).decode()
+        username, issued, exp, sig = raw.rsplit(":", 3)
+        user = load_user() or {}
+        if username != str(user.get("username", "")) or int(exp) <= int(time.time()):
+            return ""
+        payload = f"{username}:{issued}:{exp}"
+        expected = hmac.new(str(user.get("password_hash", "")).encode(), payload.encode(), hashlib.sha256).hexdigest()
+        return username if hmac.compare_digest(sig, expected) else ""
+    except Exception:
+        return ""
 
 
 def clear_session(sid: str) -> None:
@@ -488,11 +520,12 @@ def render_auth_page(mode: str, error: str = "") -> bytes:
 <style>
 :root {{ color-scheme: light; --bg:#f5f7fb; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb; --accent:#4f6f9f; --danger:#dc2626; }}
 *{{box-sizing:border-box}} body{{margin:0;min-height:100vh;display:grid;place-items:center;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:linear-gradient(180deg,#fff,#eef2f7);color:var(--text)}}
-.card{{width:min(420px,calc(100vw - 28px));background:var(--card);border:1px solid var(--line);border-radius:24px;padding:26px;box-shadow:0 18px 50px rgba(15,23,42,.10)}} h1{{margin:0 0 8px;font-size:28px;letter-spacing:-.03em}} p{{margin:0 0 18px;color:var(--muted);line-height:1.6}} label{{display:block;color:var(--muted);font-size:13px;margin:12px 0 6px}} input{{width:100%;border:1px solid #d1d5db;border-radius:13px;padding:12px;background:#fff;color:var(--text);outline:none}} input:focus{{border-color:var(--accent);box-shadow:0 0 0 3px #eef3fb}} button{{width:100%;margin-top:18px;border:1px solid #cbd5e1;background:linear-gradient(180deg,#fff,#eef2f7);color:#1f2937;font-weight:800;border-radius:13px;padding:12px;cursor:pointer}} .error{{background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:12px;padding:10px;margin:12px 0}}
+.card{{width:min(420px,calc(100vw - 28px));background:var(--card);border:1px solid var(--line);border-radius:24px;padding:26px;box-shadow:0 18px 50px rgba(15,23,42,.10)}} h1{{margin:0 0 8px;font-size:28px;letter-spacing:-.03em}} p{{margin:0 0 18px;color:var(--muted);line-height:1.6}} label{{display:block;color:var(--muted);font-size:13px;margin:12px 0 6px}} input{{width:100%;border:1px solid #d1d5db;border-radius:13px;padding:12px;background:#fff;color:var(--text);outline:none}} input:focus{{border-color:var(--accent);box-shadow:0 0 0 3px #eef3fb}} .remember{{display:flex;align-items:center;gap:8px;margin-top:14px;color:var(--muted);font-size:13px}} .remember input{{width:auto}} button{{width:100%;margin-top:18px;border:1px solid #cbd5e1;background:linear-gradient(180deg,#fff,#eef2f7);color:#1f2937;font-weight:800;border-radius:13px;padding:12px;cursor:pointer}} .error{{background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:12px;padding:10px;margin:12px 0}}
 </style></head><body><form class="card" method="post" action="{action}">
 <h1>{title}</h1><p>{hint}</p>{error_html}
 <label>用户名</label><input name="username" autocomplete="username" required autofocus>
 <label>密码</label><input name="password" type="password" autocomplete="{'new-password' if is_register else 'current-password'}" required>
+<label class="remember"><input name="remember" type="checkbox" value="1" {'checked' if not is_register else ''}>记住登录 30 天，之后自动登录</label>
 <button type="submit">{button}</button>
 </form></body></html>"""
     return body.encode("utf-8")
@@ -804,15 +837,16 @@ class MasterHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_redirect(self, location: str, cookie: str = "") -> None:
+    def send_redirect(self, location: str, cookie: str | list[str] = "") -> None:
         body = redirect_body(location)
         self.send_response(302)
         self.send_header("Location", location)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        if cookie:
-            self.send_header("Set-Cookie", cookie)
+        cookies = cookie if isinstance(cookie, list) else ([cookie] if cookie else [])
+        for item in cookies:
+            self.send_header("Set-Cookie", item)
         self.end_headers()
         self.wfile.write(body)
 
@@ -822,7 +856,14 @@ class MasterHandler(BaseHTTPRequestHandler):
             return ""
         try:
             cookie = http.cookies.SimpleCookie(raw)
-            return cookie.get("mini_komari_session").value if cookie.get("mini_komari_session") else ""
+            session_morsel = cookie.get("mini_komari_session")
+            if session_morsel:
+                return session_morsel.value
+            remember_morsel = cookie.get("mini_komari_remember")
+            remember = remember_morsel.value if remember_morsel else ""
+            if valid_remember_token(remember):
+                return create_session(SESSION_TTL)
+            return ""
         except Exception:
             return ""
 
@@ -859,7 +900,10 @@ class MasterHandler(BaseHTTPRequestHandler):
             return
         if path == "/logout":
             clear_session(self.session_id())
-            self.send_redirect("/login", "mini_komari_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
+            self.send_redirect("/login", [
+                "mini_komari_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax",
+                "mini_komari_remember=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax",
+            ])
             return
         if not self.require_dashboard_auth():
             return
@@ -905,6 +949,8 @@ class MasterHandler(BaseHTTPRequestHandler):
             form = parse_form(body)
             username = form.get("username", "").strip()
             password = form.get("password", "")
+            remember = form.get("remember") == "1"
+            session_ttl = REMEMBER_SESSION_TTL if remember else SESSION_TTL
             if path == "/register":
                 if load_user():
                     self.send_redirect("/login")
@@ -913,14 +959,18 @@ class MasterHandler(BaseHTTPRequestHandler):
                     self.send_body(400, render_auth_page("register", "用户名和密码不能为空"), "text/html; charset=utf-8")
                     return
                 save_user(username, password)
-                sid = create_session()
-                self.send_redirect("/", f"mini_komari_session={sid}; Path=/; Max-Age={SESSION_TTL}; HttpOnly; SameSite=Lax")
+                sid = create_session(session_ttl)
+                cookies = [session_cookie(sid, session_ttl)]
+                cookies.append(remember_cookie(username, session_ttl) if remember else "mini_komari_remember=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
+                self.send_redirect("/", cookies)
                 return
             if not verify_user(username, password):
                 self.send_body(401, render_auth_page("login", "用户名或密码错误"), "text/html; charset=utf-8")
                 return
-            sid = create_session()
-            self.send_redirect("/", f"mini_komari_session={sid}; Path=/; Max-Age={SESSION_TTL}; HttpOnly; SameSite=Lax")
+            sid = create_session(session_ttl)
+            cookies = [session_cookie(sid, session_ttl)]
+            cookies.append(remember_cookie(username, session_ttl) if remember else "mini_komari_remember=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
+            self.send_redirect("/", cookies)
             return
         if path == "/api/delete":
             if not self.require_dashboard_auth():
