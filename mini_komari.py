@@ -535,6 +535,16 @@ def redirect_body(location: str) -> bytes:
     return f'Redirecting to {html.escape(location)}\n'.encode()
 
 
+def replace_url_port(base_url: str, port: int) -> str:
+    if not base_url:
+        return ""
+    parsed = urlparse(base_url)
+    if not parsed.scheme or not parsed.hostname:
+        return ""
+    netloc = parsed.hostname if port in (80, 443) else f"{parsed.hostname}:{port}"
+    return f"{parsed.scheme}://{netloc}"
+
+
 def set_data_file(path: str | Path) -> None:
     global DATA_FILE
     DATA_FILE = Path(path)
@@ -1127,12 +1137,12 @@ def run_master(args: argparse.Namespace, standalone: bool = False) -> None:
     httpd.token_hint = httpd.token
     display_port = int(getattr(args, "display_port", 0) or 0)
     if not standalone and display_port > 0:
-        display_url = f"http://{args.host}:{display_port}" if args.host not in ("0.0.0.0", "::") else f"http://127.0.0.1:{display_port}"
+        display_url = replace_url_port(httpd.public_url, display_port) or (f"http://{args.host}:{display_port}" if args.host not in ("0.0.0.0", "::") else "")
         httpd.display_url = display_url
         public_httpd = ThreadingHTTPServer((args.host, display_port), PublicHandler)
         public_httpd.refresh = max(1, args.refresh)
         public_httpd.quiet = args.quiet
-        public_httpd.admin_url = httpd.public_url or f"http://127.0.0.1:{args.port}"
+        public_httpd.admin_url = httpd.public_url or (f"http://{args.host}:{args.port}" if args.host not in ("0.0.0.0", "::") else "")
         threading.Thread(target=public_httpd.serve_forever, daemon=True).start()
         print(f"Mini Komari public display listening on http://{args.host}:{display_port}", flush=True)
     else:
