@@ -597,7 +597,7 @@ def pct_bar(percent: float) -> str:
     return f'<div class="bar"><span style="width:{p}%"></span></div>'
 
 
-def render_agent_sections(data: Dict[str, object]) -> Dict[str, object]:
+def render_agent_sections(data: Dict[str, object], readonly: bool = False) -> Dict[str, object]:
     nodes = data.get("nodes", [])
     total_nodes = len(nodes) if isinstance(nodes, list) else int(data.get("count", 0) or 0)
     online_nodes = sum(1 for n in nodes if isinstance(n, dict) and bool(n.get("online")))
@@ -622,11 +622,12 @@ def render_agent_sections(data: Dict[str, object]) -> Dict[str, object]:
         node_id_raw = str(n.get("id", ""))
         node_id = html.escape(node_id_raw)
         node_id_arg = html.escape(json.dumps(node_id_raw), quote=True)
+        actions_html = f'<span class="badge {badge_cls}">{badge}</span>' if readonly else f'<span class="badge {badge_cls}">{badge}</span><button class="danger" onclick="deleteNode({node_id_arg})">删除</button>'
         grouped_cards.setdefault(group, []).append(f"""
         <section class="node" data-node-id="{node_id}">
           <div class="node-head">
             <div><h2>{html.escape(str(n.get('name','node')))}</h2><p>{html.escape(str(n.get('hostname','')))} · {html.escape(str(sysinfo.get('arch','')))} · {html.escape(group)}</p></div>
-            <div class="actions"><span class="badge {badge_cls}">{badge}</span><button class="danger" onclick="deleteNode({node_id_arg})">删除</button></div>
+            <div class="actions">{actions_html}</div>
           </div>
           <div class="metrics">
             <div><b>CPU</b><strong>{cpu_percent}%</strong>{pct_bar(cpu_percent)}<small>{clean_int(cpu.get('cores'), 1, 1, 4096)} 核 · Load {load[0]}</small></div>
@@ -646,19 +647,19 @@ def render_agent_sections(data: Dict[str, object]) -> Dict[str, object]:
         f'<section class="group"><h2>{html.escape(group)} <span>{len(cards)} 台</span></h2>{"".join(cards)}</section>'
         for group, cards in sorted(grouped_cards.items())
     )
-    empty = "" if grouped_cards else '<section class="empty">还没有 Agent 上报。先在上面生成安装命令，再去被控机执行。</section>'
+    empty = "" if grouped_cards else ('<section class="empty">还没有 Agent 上报。</section>' if readonly else '<section class="empty">还没有 Agent 上报。先在上面生成安装命令，再去被控机执行。</section>')
     return {
         "total_nodes": total_nodes,
         "online_nodes": online_nodes,
         "offline_nodes": offline_nodes,
         "group_count": group_count,
-        "summary": f"主控面板 · 节点 {total_nodes} 个 · 在线 {online_nodes} · 离线 {offline_nodes}",
+        "summary": f"{'展示页' if readonly else '主控面板'} · 节点 {total_nodes} 个 · 在线 {online_nodes} · 离线 {offline_nodes}",
         "stats_html": stats_html,
         "nodes_html": f"{group_html}{empty}",
     }
 
 
-def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw_base: str = "", token_hint: str = "") -> bytes:
+def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw_base: str = "", token_hint: str = "", display_url: str = "") -> bytes:
     sections = render_agent_sections(data)
     total_nodes = sections["total_nodes"]
     online_nodes = sections["online_nodes"]
@@ -670,6 +671,8 @@ def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw
     token_hint = ""
     install_url = f"{raw_base}/install.sh" if raw_base else "https://raw.githubusercontent.com/你的用户名/你的仓库/main/install.sh"
     master_url = public_url or "http://主控IP:6060"
+    display_url = display_url.rstrip("/")
+    display_link_html = f'<a href="{html.escape(display_url)}"><button type="button">进入展示页</button></a>' if display_url else ''
     agent_cmd = "请填写节点名、分组和 Token，或点击“生成”创建强 Token。"
     body = f"""<!doctype html><html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -685,7 +688,7 @@ def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw
 .form{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}} label{{display:block;color:var(--muted);font-size:13px;margin-bottom:5px}} input{{width:100%;border:1px solid var(--line-strong);background:#fff;color:var(--text);border-radius:12px;padding:10px 11px;outline:none;transition:border-color .15s,box-shadow .15s}} input:focus{{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}} .inline-field{{display:flex;gap:7px}} .inline-field input{{min-width:0}} .inline-field button{{white-space:nowrap;padding:10px 11px}} pre{{white-space:pre-wrap;word-break:break-all;background:#f8fafc;border:1px solid var(--line);border-radius:14px;padding:13px;color:#334155}} button{{border:1px solid #cbd5e1;background:linear-gradient(180deg,#fff,#eef2f7);color:#1f2937;font-weight:800;border-radius:12px;padding:10px 13px;cursor:pointer;box-shadow:0 3px 10px rgba(15,23,42,.06)}} button:hover{{background:linear-gradient(180deg,#fff,#e5eaf2)}} button.danger{{background:#fff;color:var(--bad);border:1px solid #fecaca;padding:6px 9px;box-shadow:none}}
 @media(max-width:860px){{.metrics,.stats{{grid-template-columns:1fr 1fr}}.hero{{flex-direction:column;align-items:flex-start}}.refresh-note{{text-align:left}}}} @media(max-width:520px){{.metrics,.stats,.form{{grid-template-columns:1fr}}}}
 </style></head><body><div class="wrap">
-<div class="hero"><div><h1><img class="logo" src="{asset_data_uri(PROBE_MARK_SVG_B64)}" alt="" aria-hidden="true">Mini Komari Master</h1><div class="sub"><span id="summaryText">主控面板 · 节点 {total_nodes} 个 · 在线 {online_nodes} · 离线 {offline_nodes}</span> · <a href="/api/nodes">JSON API</a> · <a href="/logout">退出登录</a></div></div><div><div class="refresh-note" id="refreshNote"></div></div></div>
+<div class="hero"><div><h1><img class="logo" src="{asset_data_uri(PROBE_MARK_SVG_B64)}" alt="" aria-hidden="true">Mini Komari Master</h1><div class="sub"><span id="summaryText">主控面板 · 节点 {total_nodes} 个 · 在线 {online_nodes} · 离线 {offline_nodes}</span> · <a href="/api/nodes">JSON API</a> · <a href="/logout">退出登录</a></div></div><div>{display_link_html}<div class="refresh-note" id="refreshNote"></div></div></div>
 <section class="stats" id="statsPanel" aria-label="节点统计">
 {stats_html}
 </section>
@@ -821,13 +824,60 @@ buildCmd();
     return body.encode("utf-8")
 
 
+def render_public_html(data: Dict[str, object], refresh: int, admin_url: str = "") -> bytes:
+    sections = render_agent_sections(data, readonly=True)
+    total_nodes = sections["total_nodes"]
+    online_nodes = sections["online_nodes"]
+    offline_nodes = sections["offline_nodes"]
+    stats_html = str(sections["stats_html"])
+    nodes_html = str(sections["nodes_html"])
+    admin_link = admin_url.rstrip("/") or "/login"
+    body = f"""<!doctype html><html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="{asset_data_uri(PROBE_ICON_SVG_B64)}">
+<link rel="apple-touch-icon" href="{asset_data_uri(PROBE_ICON_SVG_B64)}">
+<title>Mini Komari 展示页</title>
+<style>
+:root {{ color-scheme: light; --bg:#f5f7fb; --card:#ffffff; --card-soft:#f9fafc; --muted:#6b7280; --text:#111827; --line:#e5e7eb; --good:#16a34a; --bad:#dc2626; --accent:#4f6f9f; --shadow:0 12px 32px rgba(15,23,42,.08); }}
+*{{box-sizing:border-box}} body{{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:linear-gradient(180deg,#ffffff,#f3f6fb 42%,#eef2f7);color:var(--text)}}
+.wrap{{max-width:1180px;margin:0 auto;padding:30px 16px}} .hero{{display:flex;justify-content:space-between;gap:14px;align-items:flex-end;margin-bottom:18px;padding:18px 20px;background:rgba(255,255,255,.78);border:1px solid var(--line);border-radius:24px;box-shadow:var(--shadow);backdrop-filter:blur(10px)}} h1{{margin:0;font-size:31px;letter-spacing:-.03em;display:flex;align-items:center;gap:10px}} .logo{{width:36px;height:36px;display:inline-block;flex:0 0 auto}} .sub,p,small{{color:var(--muted)}} a{{color:var(--accent);text-decoration:none}} a:hover{{text-decoration:underline}}
+.node{{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px;margin:14px 0;box-shadow:var(--shadow)}} .stats{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}} .stat{{background:linear-gradient(180deg,#fff,#f8fafc);border:1px solid var(--line);border-radius:20px;padding:16px;box-shadow:0 8px 22px rgba(15,23,42,.06)}} .stat b{{font-size:13px;color:var(--muted);font-weight:650}} .stat strong{{font-size:31px;margin:4px 0 0;letter-spacing:-.03em}} .stat.online strong{{color:var(--good)}} .stat.offline strong{{color:var(--bad)}} .group>h2{{margin:24px 0 9px;font-size:18px;color:#1f2937}} .group>h2 span{{color:var(--muted);font-size:13px;font-weight:500}} .node-head{{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}} h2{{margin:0;font-size:22px;letter-spacing:-.02em}} p{{margin:4px 0 0}} .actions{{display:flex;gap:8px;align-items:center}} .badge{{padding:6px 10px;border-radius:999px;font-weight:800;font-size:12px;letter-spacing:.02em}} .online{{background:#dcfce7;color:#166534;border:1px solid #bbf7d0}} .offline{{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}}
+.metrics{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}} .metrics>div{{border:1px solid var(--line);background:var(--card-soft);border-radius:16px;padding:13px}} b{{display:block;color:var(--muted);font-size:13px}} strong{{display:block;font-size:24px;margin:6px 0;letter-spacing:-.02em}} small{{display:block;font-size:12px;line-height:1.5;overflow-wrap:anywhere}} .bar{{height:8px;border-radius:999px;background:#e5e7eb;overflow:hidden;margin:9px 0}} .bar span{{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#94a3b8,var(--accent))}} .foot{{margin-top:12px;color:var(--muted);font-size:13px}} .empty{{background:#fff;border:1px dashed #d1d5db;border-radius:18px;padding:22px;color:var(--muted)}} .refresh-note{{margin-top:4px;color:var(--muted);font-size:12px;text-align:right}}
+button{{border:1px solid #cbd5e1;background:linear-gradient(180deg,#fff,#eef2f7);color:#1f2937;font-weight:800;border-radius:12px;padding:10px 13px;cursor:pointer;box-shadow:0 3px 10px rgba(15,23,42,.06)}} button:hover{{background:linear-gradient(180deg,#fff,#e5eaf2)}}
+@media(max-width:860px){{.metrics,.stats{{grid-template-columns:1fr 1fr}}.hero{{flex-direction:column;align-items:flex-start}}.refresh-note{{text-align:left}}}} @media(max-width:520px){{.metrics,.stats{{grid-template-columns:1fr}}}}
+</style></head><body><div class="wrap">
+<div class="hero"><div><h1><img class="logo" src="{asset_data_uri(PROBE_MARK_SVG_B64)}" alt="" aria-hidden="true">Mini Komari 展示页</h1><div class="sub"><span id="summaryText">展示页 · 节点 {total_nodes} 个 · 在线 {online_nodes} · 离线 {offline_nodes}</span></div></div><div><a href="{html.escape(admin_link)}"><button type="button">进入后台</button></a><div class="refresh-note" id="refreshNote"></div></div></div>
+<section class="stats" id="statsPanel" aria-label="节点统计">{stats_html}</section>
+<div id="nodesPanel">{nodes_html}</div>
+<script>
+const refreshSeconds = {int(refresh)};
+async function refreshAgentData() {{
+  const note = document.getElementById('refreshNote');
+  try {{
+    const r = await fetch('/api/agent-fragment', {{cache:'no-store'}});
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    document.getElementById('summaryText').textContent = data.summary;
+    document.getElementById('statsPanel').innerHTML = data.stats_html;
+    document.getElementById('nodesPanel').innerHTML = data.nodes_html;
+    if (note) note.textContent = 'Agent 数据已更新：' + new Date().toLocaleTimeString();
+  }} catch (e) {{
+    if (note) note.textContent = 'Agent 数据刷新失败，稍后重试';
+  }}
+}}
+window.setInterval(refreshAgentData, Math.max(1, refreshSeconds) * 1000);
+</script>
+</div></body></html>"""
+    return body.encode("utf-8")
+
+
 class MasterHandler(BaseHTTPRequestHandler):
     server_version = "MiniKomari/0.2"
 
-    def log_message(self, fmt: str, *args) -> None:
+    def log_message(self, format: str, *args) -> None:
         if getattr(self.server, "quiet", False):
             return
-        super().log_message(fmt, *args)
+        super().log_message(format, *args)
 
     def send_body(self, code: int, body: bytes, ctype: str) -> None:
         self.send_response(code)
@@ -920,6 +970,7 @@ class MasterHandler(BaseHTTPRequestHandler):
                 str(getattr(self.server, "public_url", "")),
                 str(getattr(self.server, "raw_base", "")),
                 str(getattr(self.server, "token_hint", "")),
+                str(getattr(self.server, "display_url", "")),
             ), "text/html; charset=utf-8")
         else:
             self.send_body(404, b"Not Found\n", "text/plain; charset=utf-8")
@@ -1003,6 +1054,38 @@ class MasterHandler(BaseHTTPRequestHandler):
             self.send_body(400, f"bad json: {exc}\n".encode(), "text/plain; charset=utf-8")
 
 
+class PublicHandler(BaseHTTPRequestHandler):
+    server_version = "MiniKomariPublic/0.2"
+
+    def log_message(self, format: str, *args) -> None:
+        if getattr(self.server, "quiet", False):
+            return
+        super().log_message(format, *args)
+
+    def send_body(self, code: int, body: bytes, ctype: str) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        path = urlparse(self.path).path
+        data = list_nodes()
+        if path == "/health":
+            self.send_body(200, b"OK\n", "text/plain; charset=utf-8")
+        elif path in ("/api/nodes", "/api/status"):
+            self.send_body(200, json.dumps(data, ensure_ascii=False, indent=2).encode(), "application/json; charset=utf-8")
+        elif path == "/api/agent-fragment":
+            fragment = render_agent_sections(data, readonly=True)
+            self.send_body(200, json.dumps(fragment, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+        elif path == "/":
+            self.send_body(200, render_public_html(data, int(getattr(self.server, "refresh", 3)), str(getattr(self.server, "admin_url", ""))), "text/html; charset=utf-8")
+        else:
+            self.send_body(404, b"Not Found\n", "text/plain; charset=utf-8")
+
+
 def start_local_collector(node_id: str, name: str, group: str, interval: int, label: str) -> None:
     def update_once() -> None:
         status = collect_status(node_id, name, group)
@@ -1042,6 +1125,18 @@ def run_master(args: argparse.Namespace, standalone: bool = False) -> None:
     httpd.public_url = getattr(args, "public_url", "") or os.environ.get("MINI_KOMARI_PUBLIC_URL", "")
     httpd.raw_base = getattr(args, "raw_base", "") or os.environ.get("MINI_KOMARI_RAW_BASE", "")
     httpd.token_hint = httpd.token
+    display_port = int(getattr(args, "display_port", 0) or 0)
+    if not standalone and display_port > 0:
+        display_url = f"http://{args.host}:{display_port}" if args.host not in ("0.0.0.0", "::") else f"http://127.0.0.1:{display_port}"
+        httpd.display_url = display_url
+        public_httpd = ThreadingHTTPServer((args.host, display_port), PublicHandler)
+        public_httpd.refresh = max(1, args.refresh)
+        public_httpd.quiet = args.quiet
+        public_httpd.admin_url = httpd.public_url or f"http://127.0.0.1:{args.port}"
+        threading.Thread(target=public_httpd.serve_forever, daemon=True).start()
+        print(f"Mini Komari public display listening on http://{args.host}:{display_port}", flush=True)
+    else:
+        httpd.display_url = ""
     print(f"Mini Komari master listening on http://{args.host}:{args.port}", flush=True)
     httpd.serve_forever()
 
@@ -1087,6 +1182,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_master.add_argument("--refresh", type=int, default=int(os.environ.get("MINI_KOMARI_REFRESH", "3")))
     p_master.add_argument("--token", default=os.environ.get("MINI_KOMARI_TOKEN", ""))
     p_master.add_argument("--public-url", default=os.environ.get("MINI_KOMARI_PUBLIC_URL", ""), help="public master URL shown in generated agent command")
+    p_master.add_argument("--display-port", type=int, default=int(os.environ.get("MINI_KOMARI_DISPLAY_PORT", "6061")), help="public read-only display port")
     p_master.add_argument("--raw-base", default=os.environ.get("MINI_KOMARI_RAW_BASE", ""), help="GitHub raw base URL for install.sh")
     p_master.add_argument("--data-file", default=os.environ.get("MINI_KOMARI_DATA_FILE", str(DATA_FILE)), help="node persistence JSON file")
     p_master.add_argument("--user-file", default=os.environ.get("MINI_KOMARI_USER_FILE", str(USER_FILE)), help="dashboard user JSON file")
