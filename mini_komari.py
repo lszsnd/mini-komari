@@ -443,8 +443,13 @@ def ensure_legacy_user(username: str = "", password: str = "") -> None:
 
 def create_session(ttl: int = SESSION_TTL) -> str:
     sid = secrets.token_urlsafe(32)
+    now = time.time()
     with SESSIONS_LOCK:
-        SESSIONS[sid] = time.time() + max(60, int(ttl))
+        if len(SESSIONS) > 1000:
+            expired = [key for key, exp in SESSIONS.items() if exp <= now]
+            for key in expired:
+                SESSIONS.pop(key, None)
+        SESSIONS[sid] = now + max(60, int(ttl))
     return sid
 
 
@@ -813,7 +818,10 @@ function deleteNode(id) {{
   const el = document.getElementById(id);
   el.addEventListener('input', buildCmd);
 }});
+let refreshInFlight = false;
 async function refreshAgentData() {{
+  if (refreshInFlight) return;
+  refreshInFlight = true;
   const note = document.getElementById('refreshNote');
   try {{
     const r = await fetch('/api/agent-fragment', {{cache:'no-store'}});
@@ -825,6 +833,8 @@ async function refreshAgentData() {{
     if (note) note.textContent = 'Agent 数据已更新：' + new Date().toLocaleTimeString();
   }} catch (e) {{
     if (note) note.textContent = 'Agent 数据刷新失败，稍后重试';
+  }} finally {{
+    refreshInFlight = false;
   }}
 }}
 window.setInterval(refreshAgentData, Math.max(1, refreshSeconds) * 1000);
@@ -861,7 +871,10 @@ button{{border:1px solid #cbd5e1;background:linear-gradient(180deg,#fff,#eef2f7)
 <div id="nodesPanel">{nodes_html}</div>
 <script>
 const refreshSeconds = {int(refresh)};
+let refreshInFlight = false;
 async function refreshAgentData() {{
+  if (refreshInFlight) return;
+  refreshInFlight = true;
   const note = document.getElementById('refreshNote');
   try {{
     const r = await fetch('/api/agent-fragment', {{cache:'no-store'}});
@@ -873,11 +886,12 @@ async function refreshAgentData() {{
     if (note) note.textContent = 'Agent 数据已更新：' + new Date().toLocaleTimeString();
   }} catch (e) {{
     if (note) note.textContent = 'Agent 数据刷新失败，稍后重试';
+  }} finally {{
+    refreshInFlight = false;
   }}
 }}
 window.setInterval(refreshAgentData, Math.max(1, refreshSeconds) * 1000);
-</script>
-</div></body></html>"""
+</script></div></body></html>"""
     return body.encode("utf-8")
 
 
@@ -910,25 +924,22 @@ class MasterHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def session_id(self) -> str:
-        raw = self.headers.get("Cookie", "")
-        if not raw:
-            return ""
+    def parsed_cookies(self) -> http.cookies.SimpleCookie:
         try:
-            cookie = http.cookies.SimpleCookie(raw)
-            session_morsel = cookie.get("mini_komari_session")
-            if session_morsel:
-                return session_morsel.value
-            remember_morsel = cookie.get("mini_komari_remember")
-            remember = remember_morsel.value if remember_morsel else ""
-            if valid_remember_token(remember):
-                return create_session(SESSION_TTL)
-            return ""
+            return http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
         except Exception:
-            return ""
+            return http.cookies.SimpleCookie()
+
+    def session_id(self) -> str:
+        morsel = self.parsed_cookies().get("mini_komari_session")
+        return morsel.value if morsel else ""
+
+    def remember_username(self) -> str:
+        morsel = self.parsed_cookies().get("mini_komari_remember")
+        return valid_remember_token(morsel.value if morsel else "")
 
     def is_authenticated(self) -> bool:
-        return valid_session(self.session_id())
+        return valid_session(self.session_id()) or bool(self.remember_username())
 
     def require_dashboard_auth(self) -> bool:
         if not load_user():
@@ -954,7 +965,10 @@ class MasterHandler(BaseHTTPRequestHandler):
             if not load_user():
                 self.send_redirect("/register")
             elif self.is_authenticated():
-                self.send_redirect("/")
+                cookies = []
+                if not valid_session(self.session_id()) and self.remember_username():
+                    cookies.append(session_cookie(create_session(SESSION_TTL), SESSION_TTL))
+                self.send_redirect("/", cookies)
             else:
                 self.send_body(200, render_auth_page("login"), "text/html; charset=utf-8")
             return
@@ -990,9 +1004,10 @@ class MasterHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length) if length > 0 else b"{}"
         try:
             payload = json.loads(body.decode("utf-8"))
-            node_id = str(payload.get("id") or "")
-            if not node_id:
-                self.send_body(400, b"missing id\n", "text/plain; charset=utf-8")
+            try:
+                node_id = sanitize_node_id(payload.get("id") or "")
+            except ValueError:
+                self.send_body(400, b"invalid id\n", "text/plain; charset=utf-8")
                 return
             with NODES_LOCK:
                 existed = node_id in NODES
