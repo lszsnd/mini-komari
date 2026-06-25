@@ -149,7 +149,8 @@ write_master_service() {
         "MINI_KOMARI_PUBLIC_URL=$(quote_env "$public_url")" \
         "MINI_KOMARI_RAW_BASE=$(quote_env "$RAW_BASE")" \
         "MINI_KOMARI_DATA_FILE=$(quote_env "$INSTALL_DIR/nodes.json")" \
-        "MINI_KOMARI_USER_FILE=$(quote_env "$INSTALL_DIR/user.json")"
+        "MINI_KOMARI_USER_FILE=$(quote_env "$INSTALL_DIR/user.json")" \
+        "MINI_KOMARI_TOKEN_FILE=$(quote_env "$INSTALL_DIR/tokens.json")"
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Mini Komari Master

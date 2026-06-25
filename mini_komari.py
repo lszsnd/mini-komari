@@ -52,6 +52,7 @@ SESSIONS: Dict[str, float] = {}
 SESSIONS_LOCK = threading.Lock()
 DATA_FILE = Path(os.environ.get("MINI_KOMARI_DATA_FILE", "/opt/mini-komari/nodes.json"))
 USER_FILE = Path(os.environ.get("MINI_KOMARI_USER_FILE", "/opt/mini-komari/user.json"))
+TOKEN_FILE = Path(os.environ.get("MINI_KOMARI_TOKEN_FILE", "/opt/mini-komari/tokens.json"))
 SESSION_TTL = 86400 * 7
 REMEMBER_SESSION_TTL = 86400 * 30
 SAFE_NODE_ID_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,128}$")
@@ -388,6 +389,11 @@ def set_user_file(path: str | Path) -> None:
     USER_FILE = Path(path)
 
 
+def set_token_file(path: str | Path) -> None:
+    global TOKEN_FILE
+    TOKEN_FILE = Path(path)
+
+
 def password_hash(password: str, salt: str | None = None) -> Tuple[str, str]:
     salt = salt or secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200_000).hex()
@@ -495,6 +501,53 @@ def valid_remember_token(token: str) -> str:
         return username if hmac.compare_digest(sig, expected) else ""
     except Exception:
         return ""
+
+
+def load_agent_tokens() -> dict[str, dict[str, object]]:
+    if not TOKEN_FILE.exists():
+        return {}
+    try:
+        payload = json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
+        raw_tokens = payload.get("tokens", payload)
+        return raw_tokens if isinstance(raw_tokens, dict) else {}
+    except Exception as exc:
+        print(f"Failed to load agent tokens from {TOKEN_FILE}: {exc}", file=sys.stderr, flush=True)
+        return {}
+
+
+def save_agent_tokens(tokens: dict[str, dict[str, object]]) -> None:
+    try:
+        TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = TOKEN_FILE.with_name(f".{TOKEN_FILE.name}.tmp")
+        payload = {"version": 1, "saved_at": now_iso(), "tokens": tokens}
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, TOKEN_FILE)
+        try:
+            TOKEN_FILE.chmod(0o600)
+        except Exception:
+            pass
+    except Exception as exc:
+        print(f"Failed to save agent tokens to {TOKEN_FILE}: {exc}", file=sys.stderr, flush=True)
+
+
+def issue_agent_token(name: str = "", group: str = "") -> str:
+    token = secrets.token_urlsafe(32)
+    tokens = load_agent_tokens()
+    tokens[token] = {
+        "name": clean_text(name, "", 128),
+        "group": clean_text(group, "", 80),
+        "created_at": now_iso(),
+    }
+    save_agent_tokens(tokens)
+    return token
+
+
+def valid_agent_token(token: str, legacy_token: str = "") -> bool:
+    if legacy_token and hmac.compare_digest(token or "", legacy_token):
+        return True
+    if not token:
+        return False
+    return token in load_agent_tokens()
 
 
 def clear_session(sid: str) -> None:
@@ -755,18 +808,18 @@ function buildCmd() {{
   document.getElementById('agentCmd').textContent = cmd;
   return cmd;
 }}
-function generateToken() {{
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
-  const bytes = new Uint8Array(32);
-  if (window.crypto && window.crypto.getRandomValues) {{
-    window.crypto.getRandomValues(bytes);
-  }} else {{
-    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+async function generateToken() {{
+  const node = document.getElementById('nodeName').value.trim();
+  const group = document.getElementById('nodeGroup').value.trim();
+  try {{
+    const r = await fetch('/api/token', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{name:node, group}})}});
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    document.getElementById('token').value = data.token || '';
+    buildCmd();
+  }} catch (e) {{
+    alert('Token 生成失败：' + e);
   }}
-  let token = '';
-  for (const b of bytes) token += chars[b % chars.length];
-  document.getElementById('token').value = token;
-  buildCmd();
 }}
 function resetGenerator() {{
   document.getElementById('nodeName').value = '';
@@ -1028,6 +1081,16 @@ class MasterHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self.send_body(400, f"bad json: {exc}\n".encode(), "text/plain; charset=utf-8")
 
+    def handle_token_issue(self) -> None:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        body = self.rfile.read(min(length, 100_000)) if length > 0 else b"{}"
+        try:
+            payload = json.loads(body.decode("utf-8") or "{}")
+            token = issue_agent_token(str(payload.get("name") or ""), str(payload.get("group") or ""))
+            self.send_body(200, json.dumps({"ok": True, "token": token}, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+        except Exception as exc:
+            self.send_body(400, f"bad json: {exc}\n".encode(), "text/plain; charset=utf-8")
+
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         if path in ("/register", "/login"):
@@ -1064,6 +1127,11 @@ class MasterHandler(BaseHTTPRequestHandler):
                 return
             self.handle_delete()
             return
+        if path == "/api/token":
+            if not self.require_dashboard_auth():
+                return
+            self.handle_token_issue()
+            return
         if path != "/api/report":
             self.send_body(404, b"Not Found\n", "text/plain; charset=utf-8")
             return
@@ -1074,7 +1142,8 @@ class MasterHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         token = getattr(self.server, "token", "")
         sig = self.headers.get("X-Mini-KOMARI-Signature", "")
-        if not verify_signature(body, token, sig):
+        candidate_tokens = [token] + list(load_agent_tokens().keys())
+        if not any(verify_signature(body, candidate, sig) for candidate in candidate_tokens if candidate):
             self.send_body(401, b"bad signature\n", "text/plain; charset=utf-8")
             return
         try:
@@ -1147,6 +1216,7 @@ def start_local_collector(node_id: str, name: str, group: str, interval: int, la
 def run_master(args: argparse.Namespace, standalone: bool = False) -> None:
     set_data_file(getattr(args, "data_file", "") or os.environ.get("MINI_KOMARI_DATA_FILE", DATA_FILE))
     set_user_file(getattr(args, "user_file", "") or os.environ.get("MINI_KOMARI_USER_FILE", USER_FILE))
+    set_token_file(getattr(args, "token_file", "") or os.environ.get("MINI_KOMARI_TOKEN_FILE", TOKEN_FILE))
     ensure_legacy_user(getattr(args, "auth_user", ""), getattr(args, "auth_pass", ""))
     load_nodes()
     if standalone:
@@ -1221,6 +1291,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_master.add_argument("--raw-base", default=os.environ.get("MINI_KOMARI_RAW_BASE", ""), help="GitHub raw base URL for install.sh")
     p_master.add_argument("--data-file", default=os.environ.get("MINI_KOMARI_DATA_FILE", str(DATA_FILE)), help="node persistence JSON file")
     p_master.add_argument("--user-file", default=os.environ.get("MINI_KOMARI_USER_FILE", str(USER_FILE)), help="dashboard user JSON file")
+    p_master.add_argument("--token-file", default=os.environ.get("MINI_KOMARI_TOKEN_FILE", str(TOKEN_FILE)), help="issued agent token JSON file")
     p_master.add_argument("--auth-user", default=os.environ.get("MINI_KOMARI_AUTH_USER", ""), help="legacy Basic Auth username migrated to web login")
     p_master.add_argument("--auth-pass", default=os.environ.get("MINI_KOMARI_AUTH_PASS", ""), help="legacy Basic Auth password migrated to web login")
     p_master.add_argument("--self-node", action=argparse.BooleanOptionalAction, default=os.environ.get("MINI_KOMARI_SELF_NODE", "1") != "0", help="collect and show the master host as a local node")
@@ -1253,6 +1324,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_single.add_argument("--raw-base", default=os.environ.get("MINI_KOMARI_RAW_BASE", ""))
     p_single.add_argument("--data-file", default=os.environ.get("MINI_KOMARI_DATA_FILE", str(DATA_FILE)))
     p_single.add_argument("--user-file", default=os.environ.get("MINI_KOMARI_USER_FILE", str(USER_FILE)))
+    p_single.add_argument("--token-file", default=os.environ.get("MINI_KOMARI_TOKEN_FILE", str(TOKEN_FILE)))
     p_single.add_argument("--auth-user", default=os.environ.get("MINI_KOMARI_AUTH_USER", ""))
     p_single.add_argument("--auth-pass", default=os.environ.get("MINI_KOMARI_AUTH_PASS", ""))
     p_single.add_argument("--quiet", action="store_true", default=os.environ.get("MINI_KOMARI_QUIET") == "1")
