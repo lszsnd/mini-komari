@@ -612,6 +612,15 @@ def pct_bar(percent: float) -> str:
     return f'<div class="bar"><span style="width:{p}%"></span></div>'
 
 
+def pressure_class(*values: float) -> str:
+    highest = max((clean_percent(value) for value in values), default=0.0)
+    if highest >= 90:
+        return "danger"
+    if highest >= 75:
+        return "warn"
+    return "ok"
+
+
 def render_agent_sections(data: Dict[str, object], readonly: bool = False) -> Dict[str, object]:
     nodes = data.get("nodes", [])
     total_nodes = len(nodes) if isinstance(nodes, list) else int(data.get("count", 0) or 0)
@@ -631,13 +640,15 @@ def render_agent_sections(data: Dict[str, object], readonly: bool = False) -> Di
         mem_percent = clean_percent(mem.get("percent"))
         disk_percent = clean_percent(disk.get("percent"))
         online = bool(n.get("online"))
+        pressure = pressure_class(cpu_percent, mem_percent, disk_percent)
+        pressure_text = {"ok": "压力正常", "warn": "压力偏高", "danger": "压力危险"}[pressure]
         badge = "ONLINE" if online else "OFFLINE"
         badge_cls = "online" if online else "offline"
         group = str(n.get("group", "默认")) or "默认"
         node_id_raw = str(n.get("id", ""))
         node_id = html.escape(node_id_raw)
         node_id_arg = html.escape(json.dumps(node_id_raw), quote=True)
-        actions_html = f'<span class="badge {badge_cls}">{badge}</span>' if readonly else f'<span class="badge {badge_cls}">{badge}</span><button class="danger" onclick="deleteNode({node_id_arg})">删除</button>'
+        actions_html = f'<span class="badge pressure {pressure}">{pressure_text}</span><span class="badge {badge_cls}">{badge}</span>' if readonly else f'<span class="badge pressure {pressure}">{pressure_text}</span><span class="badge {badge_cls}">{badge}</span><button class="danger" onclick="deleteNode({node_id_arg})">删除</button>'
         grouped_cards.setdefault(group, []).append(f"""
         <section class="node" data-node-id="{node_id}">
           <div class="node-head">
@@ -649,6 +660,7 @@ def render_agent_sections(data: Dict[str, object], readonly: bool = False) -> Di
             <div><b>内存</b><strong>{mem_percent}%</strong>{pct_bar(mem_percent)}<small>{human_bytes(clean_int(mem.get('used')))} / {human_bytes(clean_int(mem.get('total')))}</small></div>
             <div><b>磁盘</b><strong>{disk_percent}%</strong>{pct_bar(disk_percent)}<small>{human_bytes(clean_int(disk.get('used')))} / {human_bytes(clean_int(disk.get('total')))}</small></div>
             <div><b>网络</b><strong>↓ {human_bytes(clean_float(net.get('rx_speed')))}/s</strong><small>↑ {human_bytes(clean_float(net.get('tx_speed')))}/s</small><small>总↓ {human_bytes(clean_int(net.get('rx_total')))} · 总↑ {human_bytes(clean_int(net.get('tx_total')))}</small></div>
+            <div><b>运行</b><strong>{pressure_text}</strong><small>CPU {cpu_percent}% · 内存 {mem_percent}% · 磁盘 {disk_percent}%</small><small>最后上报 {n.get('last_seen_age','?')} 秒前</small></div>
           </div>
           <div class="foot">系统运行 {html.escape(str(sysinfo.get('uptime','')))} · 最后上报 {n.get('last_seen_age','?')} 秒前 · {html.escape(str(sysinfo.get('os','')))}</div>
         </section>
@@ -698,8 +710,8 @@ def render_html(data: Dict[str, object], refresh: int, public_url: str = "", raw
 :root {{ color-scheme: light; --bg:#f5f7fb; --card:#ffffff; --card-soft:#f9fafc; --muted:#6b7280; --text:#111827; --line:#e5e7eb; --line-strong:#d1d5db; --good:#16a34a; --bad:#dc2626; --accent:#4f6f9f; --accent-soft:#eef3fb; --shadow:0 12px 32px rgba(15,23,42,.08); }}
 *{{box-sizing:border-box}} body{{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:linear-gradient(180deg,#ffffff,#f3f6fb 42%,#eef2f7);color:var(--text)}}
 .wrap{{max-width:1180px;margin:0 auto;padding:30px 16px}} .hero{{display:flex;justify-content:space-between;gap:14px;align-items:flex-end;margin-bottom:18px;padding:18px 20px;background:rgba(255,255,255,.78);border:1px solid var(--line);border-radius:24px;box-shadow:var(--shadow);backdrop-filter:blur(10px)}} h1{{margin:0;font-size:31px;letter-spacing:-.03em;display:flex;align-items:center;gap:10px}} .logo{{width:36px;height:36px;display:inline-block;flex:0 0 auto}} .sub,p,small{{color:var(--muted)}} a{{color:var(--accent);text-decoration:none}} a:hover{{text-decoration:underline}}
-.node,.generator{{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px;margin:14px 0;box-shadow:var(--shadow)}} .stats{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}} .stat{{background:linear-gradient(180deg,#fff,#f8fafc);border:1px solid var(--line);border-radius:20px;padding:16px;box-shadow:0 8px 22px rgba(15,23,42,.06)}} .stat b{{font-size:13px;color:var(--muted);font-weight:650}} .stat strong{{font-size:31px;margin:4px 0 0;letter-spacing:-.03em}} .stat.online strong{{color:var(--good)}} .stat.offline strong{{color:var(--bad)}} .group>h2{{margin:24px 0 9px;font-size:18px;color:#1f2937}} .group>h2 span{{color:var(--muted);font-size:13px;font-weight:500}} .node-head{{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}} h2{{margin:0;font-size:22px;letter-spacing:-.02em}} p{{margin:4px 0 0}} .actions{{display:flex;gap:8px;align-items:center}} .badge{{padding:6px 10px;border-radius:999px;font-weight:800;font-size:12px;letter-spacing:.02em}} .online{{background:#dcfce7;color:#166534;border:1px solid #bbf7d0}} .offline{{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}}
-.metrics{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}} .metrics>div{{border:1px solid var(--line);background:var(--card-soft);border-radius:16px;padding:13px}} b{{display:block;color:var(--muted);font-size:13px}} strong{{display:block;font-size:24px;margin:6px 0;letter-spacing:-.02em}} small{{display:block;font-size:12px;line-height:1.5;overflow-wrap:anywhere}} .bar{{height:8px;border-radius:999px;background:#e5e7eb;overflow:hidden;margin:9px 0}} .bar span{{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#94a3b8,var(--accent))}} .foot{{margin-top:12px;color:var(--muted);font-size:13px}} .empty{{background:#fff;border:1px dashed var(--line-strong);border-radius:18px;padding:22px;color:var(--muted)}} .refresh-note{{margin-top:4px;color:var(--muted);font-size:12px;text-align:right}}
+.node,.generator{{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px;margin:14px 0;box-shadow:var(--shadow)}} .stats{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}} .stat{{background:linear-gradient(180deg,#fff,#f8fafc);border:1px solid var(--line);border-radius:20px;padding:16px;box-shadow:0 8px 22px rgba(15,23,42,.06)}} .stat b{{font-size:13px;color:var(--muted);font-weight:650}} .stat strong{{font-size:31px;margin:4px 0 0;letter-spacing:-.03em}} .stat.online strong{{color:var(--good)}} .stat.offline strong{{color:var(--bad)}} .group>h2{{margin:24px 0 9px;font-size:18px;color:#1f2937}} .group>h2 span{{color:var(--muted);font-size:13px;font-weight:500}} .node-head{{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}} h2{{margin:0;font-size:22px;letter-spacing:-.02em}} p{{margin:4px 0 0}} .actions{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}} .badge{{padding:6px 10px;border-radius:999px;font-weight:800;font-size:12px;letter-spacing:.02em}} .online{{background:#dcfce7;color:#166534;border:1px solid #bbf7d0}} .offline{{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}} .pressure.ok{{background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe}} .pressure.warn{{background:#fef3c7;color:#92400e;border:1px solid #fde68a}} .pressure.danger{{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}}
+.metrics{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-top:14px}} .metrics>div{{border:1px solid var(--line);background:var(--card-soft);border-radius:16px;padding:13px}} b{{display:block;color:var(--muted);font-size:13px}} strong{{display:block;font-size:24px;margin:6px 0;letter-spacing:-.02em}} small{{display:block;font-size:12px;line-height:1.5;overflow-wrap:anywhere}} .bar{{height:8px;border-radius:999px;background:#e5e7eb;overflow:hidden;margin:9px 0}} .bar span{{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#94a3b8,var(--accent))}} .foot{{margin-top:12px;color:var(--muted);font-size:13px}} .empty{{background:#fff;border:1px dashed var(--line-strong);border-radius:18px;padding:22px;color:var(--muted)}} .refresh-note{{margin-top:4px;color:var(--muted);font-size:12px;text-align:right}}
 .form{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}} label{{display:block;color:var(--muted);font-size:13px;margin-bottom:5px}} input{{width:100%;border:1px solid var(--line-strong);background:#fff;color:var(--text);border-radius:12px;padding:10px 11px;outline:none;transition:border-color .15s,box-shadow .15s}} input:focus{{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}} .inline-field{{display:flex;gap:7px}} .inline-field input{{min-width:0}} .inline-field button{{white-space:nowrap;padding:10px 11px}} pre{{white-space:pre-wrap;word-break:break-all;background:#f8fafc;border:1px solid var(--line);border-radius:14px;padding:13px;color:#334155}} button{{border:1px solid #cbd5e1;background:linear-gradient(180deg,#fff,#eef2f7);color:#1f2937;font-weight:800;border-radius:12px;padding:10px 13px;cursor:pointer;box-shadow:0 3px 10px rgba(15,23,42,.06)}} button:hover{{background:linear-gradient(180deg,#fff,#e5eaf2)}} button.danger{{background:#fff;color:var(--bad);border:1px solid #fecaca;padding:6px 9px;box-shadow:none}}
 @media(max-width:860px){{.metrics,.stats{{grid-template-columns:1fr 1fr}}.hero{{flex-direction:column;align-items:flex-start}}.refresh-note{{text-align:left}}}} @media(max-width:520px){{.metrics,.stats,.form{{grid-template-columns:1fr}}}}
 </style></head><body><div class="wrap">
@@ -844,14 +856,13 @@ buildCmd();
     return body.encode("utf-8")
 
 
-def render_public_html(data: Dict[str, object], refresh: int, admin_url: str = "") -> bytes:
+def render_public_html(data: Dict[str, object], refresh: int) -> bytes:
     sections = render_agent_sections(data, readonly=True)
     total_nodes = sections["total_nodes"]
     online_nodes = sections["online_nodes"]
     offline_nodes = sections["offline_nodes"]
     stats_html = str(sections["stats_html"])
     nodes_html = str(sections["nodes_html"])
-    admin_link = admin_url.rstrip("/") or "/login"
     body = f"""<!doctype html><html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="{asset_data_uri(PROBE_ICON_SVG_B64)}">
@@ -861,12 +872,12 @@ def render_public_html(data: Dict[str, object], refresh: int, admin_url: str = "
 :root {{ color-scheme: light; --bg:#f5f7fb; --card:#ffffff; --card-soft:#f9fafc; --muted:#6b7280; --text:#111827; --line:#e5e7eb; --good:#16a34a; --bad:#dc2626; --accent:#4f6f9f; --shadow:0 12px 32px rgba(15,23,42,.08); }}
 *{{box-sizing:border-box}} body{{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:linear-gradient(180deg,#ffffff,#f3f6fb 42%,#eef2f7);color:var(--text)}}
 .wrap{{max-width:1180px;margin:0 auto;padding:30px 16px}} .hero{{display:flex;justify-content:space-between;gap:14px;align-items:flex-end;margin-bottom:18px;padding:18px 20px;background:rgba(255,255,255,.78);border:1px solid var(--line);border-radius:24px;box-shadow:var(--shadow);backdrop-filter:blur(10px)}} h1{{margin:0;font-size:31px;letter-spacing:-.03em;display:flex;align-items:center;gap:10px}} .logo{{width:36px;height:36px;display:inline-block;flex:0 0 auto}} .sub,p,small{{color:var(--muted)}} a{{color:var(--accent);text-decoration:none}} a:hover{{text-decoration:underline}}
-.node{{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px;margin:14px 0;box-shadow:var(--shadow)}} .stats{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}} .stat{{background:linear-gradient(180deg,#fff,#f8fafc);border:1px solid var(--line);border-radius:20px;padding:16px;box-shadow:0 8px 22px rgba(15,23,42,.06)}} .stat b{{font-size:13px;color:var(--muted);font-weight:650}} .stat strong{{font-size:31px;margin:4px 0 0;letter-spacing:-.03em}} .stat.online strong{{color:var(--good)}} .stat.offline strong{{color:var(--bad)}} .group>h2{{margin:24px 0 9px;font-size:18px;color:#1f2937}} .group>h2 span{{color:var(--muted);font-size:13px;font-weight:500}} .node-head{{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}} h2{{margin:0;font-size:22px;letter-spacing:-.02em}} p{{margin:4px 0 0}} .actions{{display:flex;gap:8px;align-items:center}} .badge{{padding:6px 10px;border-radius:999px;font-weight:800;font-size:12px;letter-spacing:.02em}} .online{{background:#dcfce7;color:#166534;border:1px solid #bbf7d0}} .offline{{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}}
-.metrics{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}} .metrics>div{{border:1px solid var(--line);background:var(--card-soft);border-radius:16px;padding:13px}} b{{display:block;color:var(--muted);font-size:13px}} strong{{display:block;font-size:24px;margin:6px 0;letter-spacing:-.02em}} small{{display:block;font-size:12px;line-height:1.5;overflow-wrap:anywhere}} .bar{{height:8px;border-radius:999px;background:#e5e7eb;overflow:hidden;margin:9px 0}} .bar span{{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#94a3b8,var(--accent))}} .foot{{margin-top:12px;color:var(--muted);font-size:13px}} .empty{{background:#fff;border:1px dashed #d1d5db;border-radius:18px;padding:22px;color:var(--muted)}} .refresh-note{{margin-top:4px;color:var(--muted);font-size:12px;text-align:right}}
+.node{{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px;margin:14px 0;box-shadow:var(--shadow)}} .stats{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}} .stat{{background:linear-gradient(180deg,#fff,#f8fafc);border:1px solid var(--line);border-radius:20px;padding:16px;box-shadow:0 8px 22px rgba(15,23,42,.06)}} .stat b{{font-size:13px;color:var(--muted);font-weight:650}} .stat strong{{font-size:31px;margin:4px 0 0;letter-spacing:-.03em}} .stat.online strong{{color:var(--good)}} .stat.offline strong{{color:var(--bad)}} .group>h2{{margin:24px 0 9px;font-size:18px;color:#1f2937}} .group>h2 span{{color:var(--muted);font-size:13px;font-weight:500}} .node-head{{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}} h2{{margin:0;font-size:22px;letter-spacing:-.02em}} p{{margin:4px 0 0}} .actions{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}} .badge{{padding:6px 10px;border-radius:999px;font-weight:800;font-size:12px;letter-spacing:.02em}} .online{{background:#dcfce7;color:#166534;border:1px solid #bbf7d0}} .offline{{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}} .pressure.ok{{background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe}} .pressure.warn{{background:#fef3c7;color:#92400e;border:1px solid #fde68a}} .pressure.danger{{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}}
+.metrics{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-top:14px}} .metrics>div{{border:1px solid var(--line);background:var(--card-soft);border-radius:16px;padding:13px}} b{{display:block;color:var(--muted);font-size:13px}} strong{{display:block;font-size:24px;margin:6px 0;letter-spacing:-.02em}} small{{display:block;font-size:12px;line-height:1.5;overflow-wrap:anywhere}} .bar{{height:8px;border-radius:999px;background:#e5e7eb;overflow:hidden;margin:9px 0}} .bar span{{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#94a3b8,var(--accent))}} .foot{{margin-top:12px;color:var(--muted);font-size:13px}} .empty{{background:#fff;border:1px dashed #d1d5db;border-radius:18px;padding:22px;color:var(--muted)}} .refresh-note{{margin-top:4px;color:var(--muted);font-size:12px;text-align:right}}
 button{{border:1px solid #cbd5e1;background:linear-gradient(180deg,#fff,#eef2f7);color:#1f2937;font-weight:800;border-radius:12px;padding:10px 13px;cursor:pointer;box-shadow:0 3px 10px rgba(15,23,42,.06)}} button:hover{{background:linear-gradient(180deg,#fff,#e5eaf2)}}
 @media(max-width:860px){{.metrics,.stats{{grid-template-columns:1fr 1fr}}.hero{{flex-direction:column;align-items:flex-start}}.refresh-note{{text-align:left}}}} @media(max-width:520px){{.metrics,.stats{{grid-template-columns:1fr}}}}
 </style></head><body><div class="wrap">
-<div class="hero"><div><h1><img class="logo" src="{asset_data_uri(PROBE_MARK_SVG_B64)}" alt="" aria-hidden="true">Mini Komari 展示页</h1><div class="sub"><span id="summaryText">展示页 · 节点 {total_nodes} 个 · 在线 {online_nodes} · 离线 {offline_nodes}</span></div></div><div><a href="{html.escape(admin_link)}"><button type="button">进入后台</button></a><div class="refresh-note" id="refreshNote"></div></div></div>
+<div class="hero"><div><h1><img class="logo" src="{asset_data_uri(PROBE_MARK_SVG_B64)}" alt="" aria-hidden="true">Mini Komari 展示页</h1><div class="sub"><span id="summaryText">展示页 · 节点 {total_nodes} 个 · 在线 {online_nodes} · 离线 {offline_nodes}</span></div></div><div><div class="refresh-note" id="refreshNote"></div></div></div>
 <section class="stats" id="statsPanel" aria-label="节点统计">{stats_html}</section>
 <div id="nodesPanel">{nodes_html}</div>
 <script>
@@ -1106,7 +1117,7 @@ class PublicHandler(BaseHTTPRequestHandler):
             fragment = render_agent_sections(data, readonly=True)
             self.send_body(200, json.dumps(fragment, ensure_ascii=False).encode(), "application/json; charset=utf-8")
         elif path == "/":
-            self.send_body(200, render_public_html(data, int(getattr(self.server, "refresh", 3)), str(getattr(self.server, "admin_url", ""))), "text/html; charset=utf-8")
+            self.send_body(200, render_public_html(data, int(getattr(self.server, "refresh", 3))), "text/html; charset=utf-8")
         else:
             self.send_body(404, b"Not Found\n", "text/plain; charset=utf-8")
 
@@ -1157,7 +1168,6 @@ def run_master(args: argparse.Namespace, standalone: bool = False) -> None:
         public_httpd = ThreadingHTTPServer((args.host, display_port), PublicHandler)
         public_httpd.refresh = max(1, args.refresh)
         public_httpd.quiet = args.quiet
-        public_httpd.admin_url = httpd.public_url or (f"http://{args.host}:{args.port}" if args.host not in ("0.0.0.0", "::") else "")
         threading.Thread(target=public_httpd.serve_forever, daemon=True).start()
         print(f"Mini Komari public display listening on http://{args.host}:{display_port}", flush=True)
     else:
